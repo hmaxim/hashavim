@@ -7,6 +7,8 @@ import {
   type TaskPatch,
 } from "./types";
 
+export const TITLE_MAX = 120;
+
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -39,8 +41,8 @@ export function validateTitle(raw: unknown): ValidationResult {
   if (title.length < 1) {
     return { ok: false, error: "Title is required" };
   }
-  if (title.length > 120) {
-    return { ok: false, error: "Title must be at most 120 characters" };
+  if (title.length > TITLE_MAX) {
+    return { ok: false, error: `Title must be at most ${TITLE_MAX} characters` };
   }
   return { ok: true, title };
 }

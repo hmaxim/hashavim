@@ -9,6 +9,10 @@ import { getMockControl, getServerStore } from "@/src/server/store";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+export async function GET() {
+  return NextResponse.json({ paused: getMockControl().mockPaused });
+}
+
 export async function POST(request: Request) {
   ensureMockUpdaterStarted();
   const url = new URL(request.url);

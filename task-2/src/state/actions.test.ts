@@ -66,6 +66,21 @@ describe("actions failure paths", () => {
     expect(store.getState().activity[0]?.pending).toBe(false);
   });
 
+  it("PATCH no-op response settles the pending edit without an SSE echo", async () => {
+    const store = createBoardStore(snapshot());
+    stubFetch(
+      async () =>
+        new Response(JSON.stringify({ noop: true, seq: 0 }), { status: 200 }),
+    );
+
+    const err = await updateTask(store, T1, { status: "done" });
+
+    expect(err).toBeNull();
+    expect(store.getState().pendingMutations).toEqual({});
+    expect(store.getState().activity).toEqual([]);
+    expect(store.getState().tasksById[T1]?.status).toBe("done");
+  });
+
   it("POST error removes the optimistic task and reports the server message", async () => {
     const store = createBoardStore(snapshot());
     stubFetch(

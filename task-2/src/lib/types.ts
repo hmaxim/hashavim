@@ -37,6 +37,8 @@ export type ActivityEntry = {
   mutationId?: string;
   pending?: boolean;
   failed?: boolean;
+  /** Client-only: this tab made the change (label "You" instead of "A user"). */
+  own?: boolean;
 };
 
 export type TaskEvent = {
@@ -66,6 +68,14 @@ export type PendingMutation = {
   optimistic?: TaskPatch;
   /** Full task for create (remove on rollback) or delete (restore on rollback). */
   taskSnapshot?: Task;
+  /**
+   * Server seq returned by the HTTP response. Once lastSeq reaches it the
+   * change is in our copy, even if its echo never arrives (no-op, or it was
+   * folded into a reconnect snapshot).
+   */
+  ackSeq?: number;
+  /** The server already had these values: drop the log row instead of confirming it. */
+  ackNoop?: boolean;
 };
 
 export type BoardState = {

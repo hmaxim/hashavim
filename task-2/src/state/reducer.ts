@@ -34,6 +34,7 @@ export type BoardEvent =
       activity: ActivityEntry;
       taskSnapshot: Task;
     }
+  | { type: "ack"; mutationId: string; seq: number; noop: boolean }
   | { type: "rollback"; mutationId: string }
   | { type: "markFailed"; mutationId: string }
   | { type: "select"; taskId: string | null }
@@ -139,6 +140,25 @@ function removePending(
   return rest;
 }
 
+/** Drops pending mutations the server confirmed at or before lastSeq. */
+function settleAcked(state: BoardState): BoardState {
+  let pendingMutations = state.pendingMutations;
+  let activity = state.activity;
+  for (const mutation of Object.values(state.pendingMutations)) {
+    if (mutation.ackSeq === undefined || mutation.ackSeq > state.lastSeq) {
+      continue;
+    }
+    pendingMutations = removePending(pendingMutations, mutation.mutationId);
+    activity = mutation.ackNoop
+      ? activity.filter((a) => a.mutationId !== mutation.mutationId)
+      : activity.map((a) =>
+          a.mutationId === mutation.mutationId ? { ...a, pending: false } : a,
+        );
+  }
+  if (pendingMutations === state.pendingMutations) return state;
+  return { ...state, pendingMutations, activity };
+}
+
 function reapplyPending(base: BoardState, onlyTaskId?: string): BoardState {
   let next = base;
   for (const mutation of Object.values(base.pendingMutations)) {
@@ -201,6 +221,7 @@ function applyServerEvent(state: BoardState, event: TaskEvent): BoardState {
         ...event.activity,
         pending: false,
         failed: false,
+        own: true,
       }),
     };
   } else {
@@ -210,12 +231,14 @@ function applyServerEvent(state: BoardState, event: TaskEvent): BoardState {
     };
   }
 
-  // The server copy predates any newer optimistic edits still in flight.
-  return {
-    ...reapplyPending(next, event.taskId),
+  // Settle first so a confirmed edit is not re-applied over newer server data;
+  // what is left predates the server copy and goes back on top.
+  const settled = settleAcked({
+    ...next,
     lastSeq: event.seq,
     needsResync: false,
-  };
+  });
+  return reapplyPending(settled, event.taskId);
 }
 
 function applyRollback(state: BoardState, mutationId: string): BoardState {
@@ -263,7 +286,7 @@ export function applyEvent(state: BoardState, event: BoardEvent): BoardState {
   switch (event.type) {
     case "snapshot": {
       const base = stateFromSnapshot(event.snapshot);
-      const withPending = reapplyPending({
+      const withPending = reapplyPending(settleAcked({
         ...base,
         pendingMutations: state.pendingMutations,
         activity: [
@@ -277,7 +300,7 @@ export function applyEvent(state: BoardState, event: BoardEvent): BoardState {
         selectedId: state.selectedId,
         connection: "connected",
         needsResync: false,
-      });
+      }));
       // Keep selection only if the task still exists after resync.
       if (
         withPending.selectedId &&
@@ -305,6 +328,7 @@ export function applyEvent(state: BoardState, event: BoardEvent): BoardState {
         activity: prependActivity(state.activity, {
           ...event.activity,
           pending: true,
+          own: true,
         }),
       };
     }
@@ -335,6 +359,7 @@ export function applyEvent(state: BoardState, event: BoardEvent): BoardState {
         activity: prependActivity(state.activity, {
           ...event.activity,
           pending: true,
+          own: true,
         }),
       };
     }
@@ -354,8 +379,24 @@ export function applyEvent(state: BoardState, event: BoardEvent): BoardState {
         activity: prependActivity(state.activity, {
           ...event.activity,
           pending: true,
+          own: true,
         }),
       };
+    }
+    case "ack": {
+      const mutation = state.pendingMutations[event.mutationId];
+      if (!mutation) return state;
+      return settleAcked({
+        ...state,
+        pendingMutations: {
+          ...state.pendingMutations,
+          [event.mutationId]: {
+            ...mutation,
+            ackSeq: event.seq,
+            ackNoop: event.noop,
+          },
+        },
+      });
     }
     case "rollback":
       return applyRollback(state, event.mutationId);

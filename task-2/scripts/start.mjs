@@ -12,7 +12,8 @@ if (!existsSync("node_modules")) {
   run("npm", ["install"]);
 }
 
-if (!existsSync(".next")) {
+// `next dev` also creates .next, but only a production build writes BUILD_ID.
+if (!existsSync(".next/BUILD_ID")) {
   run("npm", ["run", "build"]);
 }
 

@@ -1,6 +1,7 @@
 import { createId } from "@/src/lib/ids";
 import { MEMBERS } from "@/src/lib/members";
 import { PRIORITIES, STATUSES, type Task } from "@/src/lib/types";
+import { TITLE_MAX } from "@/src/lib/validation";
 import { getMockControl, getServerStore, type ServerStore } from "./store";
 
 export type Rng = () => number;
@@ -33,6 +34,13 @@ export function mulberry32(seed: number): Rng {
 
 function pick<T>(rng: Rng, items: readonly T[]): T {
   return items[Math.floor(rng() * items.length)]!;
+}
+
+/** A typo like "2s" would give NaN, and setTimeout(NaN) fires at once in a tight loop. */
+function envMs(name: string, fallback: number): number {
+  const raw = process.env[name];
+  const value = Number(raw);
+  return raw && Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
 function delayMs(rng: Rng, minMs: number, maxMs: number): number {
@@ -111,7 +119,11 @@ export function tickMock(
     );
     patch = { priority: next };
   } else {
-    patch = { title: `${task.title.replace(/ \(edited.*\)$/, "")} (edited)` };
+    const suffix = " (edited)";
+    const base = task.title
+      .replace(/ \(edited.*\)$/, "")
+      .slice(0, TITLE_MAX - suffix.length);
+    patch = { title: `${base}${suffix}` };
   }
 
   const result = store.patchTask(task.id, patch, {
@@ -136,8 +148,8 @@ export function startMockUpdater(config: MockConfig = {}): () => void {
     return () => undefined;
   }
 
-  const minMs = config.minMs ?? Number(process.env.MOCK_MIN_MS || 2000);
-  const maxMs = config.maxMs ?? Number(process.env.MOCK_MAX_MS || 5000);
+  const minMs = config.minMs ?? envMs("MOCK_MIN_MS", 2000);
+  const maxMs = Math.max(minMs, config.maxMs ?? envMs("MOCK_MAX_MS", 5000));
   const seedEnv = process.env.MOCK_SEED;
   const seed =
     config.seed ??
