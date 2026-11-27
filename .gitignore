@@ -1,6 +1,7 @@
 .DS_Store
 .env
 .env.*
+!.env.example
 *.pem
 node_modules/
 .next/
@@ -9,3 +10,4 @@ coverage/
 *.db
 *.db-wal
 *.db-shm
+data/
