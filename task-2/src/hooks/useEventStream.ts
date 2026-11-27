@@ -8,6 +8,14 @@ type EventSourceFactory = (url: string) => EventSource;
 
 const defaultEventSource: EventSourceFactory = (url) => new EventSource(url);
 
+function parseData<T>(msg: Event): T | null {
+  try {
+    return JSON.parse((msg as MessageEvent).data) as T;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Opens one SSE connection to /api/events. Safe under StrictMode double-mount:
  * the previous source is closed before a new one is created, and a generation
@@ -45,26 +53,34 @@ export function useEventStream(
       const source = factoryRef.current("/api/events");
       sourceRef.current = source;
 
+      // Drop this connection and fetch a fresh snapshot on a new one.
+      const resync = (delayMs: number) => {
+        store.getState().dispatch({ type: "connection", status: "reconnecting" });
+        source.close();
+        sourceRef.current = null;
+        reconnectTimer = setTimeout(connect, delayMs);
+      };
+
       source.addEventListener("snapshot", (msg) => {
         if (gen !== genRef.current) return;
-        const snapshot = JSON.parse((msg as MessageEvent).data) as Snapshot;
+        const snapshot = parseData<Snapshot>(msg);
+        if (!snapshot) {
+          resync(1000);
+          return;
+        }
         store.getState().dispatch({ type: "snapshot", snapshot });
         store.getState().dispatch({ type: "connection", status: "connected" });
       });
 
       source.addEventListener("event", (msg) => {
         if (gen !== genRef.current) return;
-        const event = JSON.parse((msg as MessageEvent).data) as TaskEvent;
-        store.getState().dispatch({ type: "server", event });
-        if (store.getState().needsResync) {
-          store.getState().dispatch({
-            type: "connection",
-            status: "reconnecting",
-          });
-          source.close();
-          sourceRef.current = null;
-          reconnectTimer = setTimeout(connect, 250);
+        const event = parseData<TaskEvent>(msg);
+        if (!event) {
+          resync(1000);
+          return;
         }
+        store.getState().dispatch({ type: "server", event });
+        if (store.getState().needsResync) resync(250);
       });
 
       source.onerror = () => {
