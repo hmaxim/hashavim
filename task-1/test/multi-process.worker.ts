@@ -4,9 +4,9 @@
  */
 import { loadAppConfig } from '../src/config/app-config';
 import { SystemClock } from '../src/common/clock';
-import { ControllableAiProvider } from '../src/ai/ai-provider';
 import { SqliteDatabase } from '../src/ledger/database';
 import { LedgerRepository } from '../src/ledger/ledger.repository';
+import { ControllableAiProvider } from './fakes';
 import { createHash, randomUUID } from 'crypto';
 
 async function main(): Promise<void> {

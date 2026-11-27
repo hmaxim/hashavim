@@ -178,6 +178,71 @@ describe('Usage metering e2e', () => {
     expect(usage.remaining).toBe(2);
   });
 
+  it('reconcile reports no drift for an expired reservation the sweeper has not released yet', async () => {
+    const ledger = t.app.get(LedgerRepository);
+    ledger.reserve({
+      userId: 'u6b',
+      idempotencyKey: 'crashed-1',
+      requestId: 'req-crashed',
+      requestHash: 'hash-crashed',
+    });
+    t.clock.advanceMs((t.config.reservationTtlSeconds + 1) * 1000);
+    // Counter still holds the credit until expiry runs; the ledger agrees.
+    expect(ledger.reconcile()).toEqual([]);
+    expect(ledger.expireAllStale()).toBe(1);
+    expect(ledger.reconcile()).toEqual([]);
+  });
+
+  it('AI answer arriving after TTL release is not billed; replay returns the ttl_expired body', async () => {
+    t.ai.succeed('too-late');
+    const entered = t.ai.block();
+    const quota = t.app.get(QuotaService);
+    const inFlight = quota.handleAiRequest(
+      { userId: 'u6c', prompt: 'slow' },
+      'idem-ttl',
+      'req-ttl',
+    );
+    await entered;
+    t.clock.advanceMs((t.config.reservationTtlSeconds + 1) * 1000);
+    expect(t.app.get(LedgerRepository).expireAllStale()).toBe(1);
+    t.ai.release();
+    const result = await inFlight;
+    expect(result.status).toBe('released');
+    expect(result.usage.used).toBe(0);
+
+    const replay = await request(t.app.getHttpServer())
+      .post('/v1/ai/requests')
+      .set('Idempotency-Key', 'idem-ttl')
+      .send({ userId: 'u6c', prompt: 'slow' })
+      .expect(201);
+    expect(replay.body).toMatchObject({
+      reservationId: result.reservationId,
+      status: 'released',
+      reason: 'ttl_expired',
+      ai: null,
+      idempotencyKey: 'idem-ttl',
+    });
+    expect(t.ai.calls).toBe(1);
+    expect(quota.reconcile()).toEqual([]);
+  });
+
+  it('request_id is server-generated even when the client sends x-request-id', async () => {
+    const res = await request(t.app.getHttpServer())
+      .post('/v1/ai/requests')
+      .set('x-request-id', 'spoofed')
+      .send({ userId: 'u6d', prompt: 'x' })
+      .expect(201);
+    const serverId = res.headers['x-request-id'];
+    expect(serverId).not.toBe('spoofed');
+    expect(res.body.requestId).toBe(serverId);
+    const ids = t.app
+      .get(LedgerRepository)
+      .getRecentLedger('u6d')
+      .map((r) => r.request_id);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(new Set(ids)).toEqual(new Set([serverId]));
+  });
+
   it('period rollover resets usage; old records retained', async () => {
     await request(t.app.getHttpServer())
       .post('/v1/ai/requests')
@@ -357,6 +422,11 @@ describe('Usage metering e2e', () => {
         .send({ userId: 'u14', prompt: 'locked' })
         .expect(503);
       expect(t.ai.calls).toBe(0);
+      await request(t.app.getHttpServer())
+        .put('/v1/users/u14/limit')
+        .set('x-admin-token', ADMIN_TOKEN)
+        .send({ limit: 3 })
+        .expect(503);
     } finally {
       other.db.exec('ROLLBACK');
       other.close();
