@@ -1,7 +1,15 @@
 import request, { Response } from 'supertest';
+import { SqliteDatabase } from '../src/ledger/database';
 import { LedgerRepository } from '../src/ledger/ledger.repository';
 import { QuotaService } from '../src/quota/quota.service';
-import { createTestApp, TestApp } from './helpers';
+import {
+  ADMIN_TOKEN,
+  createTestApp,
+  errorMessageOf,
+  firstUsageId,
+  injectCounterDrift,
+  TestApp,
+} from './helpers';
 
 describe('Usage metering e2e', () => {
   let t: TestApp;
@@ -123,7 +131,7 @@ describe('Usage metering e2e', () => {
     expect(res.body.ai.timedOut).toBe(true);
 
     const ledger = t.app.get(LedgerRepository);
-    const usageAfterLate = ledger.settle({
+    const late = ledger.settle({
       reservationId: res.body.reservationId,
       userId: 'u5',
       periodId: res.body.usage.periodId,
@@ -132,10 +140,11 @@ describe('Usage metering e2e', () => {
       latencyMs: 999,
       errorCode: null,
       releaseReason: null,
-      responsePayload: { late: true },
+      buildResponse: () => ({ late: true }),
     });
-    expect(usageAfterLate.used).toBe(0);
-    expect(usageAfterLate.remaining).toBe(5);
+    expect(late.settled).toBe(false);
+    expect(late.usage.used).toBe(0);
+    expect(late.usage.remaining).toBe(5);
   });
 
   it('stale RESERVED past TTL is expired and credit returned', async () => {
@@ -199,6 +208,7 @@ describe('Usage metering e2e', () => {
 
     await request(t.app.getHttpServer())
       .put('/v1/users/u8/limit')
+      .set('x-admin-token', ADMIN_TOKEN)
       .send({ limit: 1 })
       .expect(200);
 
@@ -209,6 +219,7 @@ describe('Usage metering e2e', () => {
 
     await request(t.app.getHttpServer())
       .put('/v1/users/u8/limit')
+      .set('x-admin-token', ADMIN_TOKEN)
       .send({ limit: 10 })
       .expect(200);
 
@@ -253,11 +264,18 @@ describe('Usage metering e2e', () => {
       .post('/v1/ai/requests')
       .send({ userId: 'u10', prompt: 'x' })
       .expect(201);
-    const ledger = t.app.get(LedgerRepository);
-    const id = ledger.getFirstUsageId('u10');
-    expect(id).toBeDefined();
-    expect(ledger.tryMutateLedgerForTest(id!)).toMatch(/append-only/);
-    expect(ledger.tryDeleteLedgerForTest(id!)).toMatch(/append-only/);
+    const sqlite = t.app.get(SqliteDatabase);
+    const id = firstUsageId(sqlite, 'u10');
+    expect(
+      errorMessageOf(() =>
+        sqlite.db.prepare('UPDATE usage_ledger SET credits = 99 WHERE usage_id = ?').run(id),
+      ),
+    ).toMatch(/append-only/);
+    expect(
+      errorMessageOf(() =>
+        sqlite.db.prepare('DELETE FROM usage_ledger WHERE usage_id = ?').run(id),
+      ),
+    ).toMatch(/append-only/);
   });
 
   it('reconcile detects injected counter drift', async () => {
@@ -267,7 +285,7 @@ describe('Usage metering e2e', () => {
       .expect(201);
     const ledger = t.app.get(LedgerRepository);
     const usage = ledger.buildUsageSnapshot('u11');
-    ledger.injectCounterDrift('u11', usage.periodId, 3);
+    injectCounterDrift(t.app.get(SqliteDatabase), 'u11', usage.periodId, 3);
     const drifts = ledger.reconcile();
     expect(drifts.length).toBe(1);
     expect(drifts[0].counterUsed).toBe(usage.used + 3);
@@ -293,5 +311,75 @@ describe('Usage metering e2e', () => {
       .post('/v1/ai/requests')
       .send({ userId: 'u0', prompt: 'nope' })
       .expect(429);
+  });
+
+  it('idempotency: same key while the first call is in flight returns 409, then replays', async () => {
+    t.ai.succeed('ok');
+    const entered = t.ai.block();
+    const first = request(t.app.getHttpServer())
+      .post('/v1/ai/requests')
+      .set('Idempotency-Key', 'idem-inflight-dup')
+      .send({ userId: 'u13', prompt: 'dup' })
+      .then((r) => r);
+
+    await entered;
+    const dup = await request(t.app.getHttpServer())
+      .post('/v1/ai/requests')
+      .set('Idempotency-Key', 'idem-inflight-dup')
+      .send({ userId: 'u13', prompt: 'dup' })
+      .expect(409);
+    expect(dup.body.message).toMatch(/in progress/);
+
+    t.ai.release();
+    const done = await first;
+    expect(done.status).toBe(201);
+    expect(done.body.status).toBe('committed');
+
+    const replay = await request(t.app.getHttpServer())
+      .post('/v1/ai/requests')
+      .set('Idempotency-Key', 'idem-inflight-dup')
+      .send({ userId: 'u13', prompt: 'dup' })
+      .expect(201);
+    expect(replay.body.status).toBe('committed');
+    expect(replay.body.ai.text).toBe('ok');
+    expect(replay.body.reservationId).toBe(done.body.reservationId);
+    expect(t.ai.calls).toBe(1);
+  });
+
+  it('fails closed with 503 when the database is locked', async () => {
+    const sqlite = t.app.get(SqliteDatabase);
+    sqlite.db.pragma('busy_timeout = 50');
+    const other = new SqliteDatabase(t.dbPath);
+    other.db.exec('BEGIN EXCLUSIVE');
+    try {
+      await request(t.app.getHttpServer())
+        .post('/v1/ai/requests')
+        .send({ userId: 'u14', prompt: 'locked' })
+        .expect(503);
+      expect(t.ai.calls).toBe(0);
+    } finally {
+      other.db.exec('ROLLBACK');
+      other.close();
+    }
+  });
+
+  it('admin limit route requires the admin token', async () => {
+    await request(t.app.getHttpServer())
+      .put('/v1/users/u15/limit')
+      .send({ limit: 1 })
+      .expect(403);
+    await request(t.app.getHttpServer())
+      .put('/v1/users/u15/limit')
+      .set('x-admin-token', 'wrong')
+      .send({ limit: 1 })
+      .expect(403);
+
+    await t.close();
+    t = await createTestApp({ adminToken: null });
+    await request(t.app.getHttpServer())
+      .put('/v1/users/u15/limit')
+      .set('x-admin-token', ADMIN_TOKEN)
+      .send({ limit: 1 })
+      .expect(403);
   });
 });

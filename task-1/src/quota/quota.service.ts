@@ -5,15 +5,15 @@ import {
   Injectable,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { createHash } from 'crypto';
-import { v4 as uuidv4 } from 'uuid';
-import { AI_PROVIDER, AiProvider } from '../ai/ai-provider';
+import { createHash, randomUUID } from 'crypto';
+import { AI_PROVIDER, AiProvider, AiResult } from '../ai/ai-provider';
 import { APP_CONFIG, AppConfig } from '../config/app-config';
 import { periodIdFor } from '../common/period';
 import { CLOCK, Clock } from '../common/clock';
 import { LedgerRepository } from '../ledger/ledger.repository';
 import {
   IdempotencyConflictError,
+  IdempotencyInProgressError,
   StorageUnavailableError,
   UsageSnapshot,
 } from '../ledger/types';
@@ -25,7 +25,7 @@ export interface AiRequestBody {
 
 export interface AiRequestResult {
   reservationId: string;
-  status: 'committed' | 'released' | 'rejected_quota' | 'replay';
+  status: 'committed' | 'released' | 'rejected_quota';
   ai?: {
     ok: boolean;
     text?: string;
@@ -58,7 +58,7 @@ export class QuotaService {
     idempotencyKey: string | undefined,
     requestId: string,
   ): Promise<AiRequestResult> {
-    const key = idempotencyKey && idempotencyKey.trim() !== '' ? idempotencyKey : uuidv4();
+    const key = idempotencyKey && idempotencyKey.trim() !== '' ? idempotencyKey : randomUUID();
     const requestHash = this.hashPayload(body.userId, body.prompt);
 
     let reserve;
@@ -70,7 +70,10 @@ export class QuotaService {
         requestHash,
       });
     } catch (err) {
-      if (err instanceof IdempotencyConflictError) {
+      if (
+        err instanceof IdempotencyConflictError ||
+        err instanceof IdempotencyInProgressError
+      ) {
         throw new ConflictException(err.message);
       }
       if (err instanceof StorageUnavailableError) {
@@ -93,8 +96,8 @@ export class QuotaService {
     }
 
     if (reserve.kind === 'replay') {
-      const cached = reserve.cachedResponse as AiRequestResult | undefined;
-      if (cached && cached.status === 'rejected_quota') {
+      const cached = reserve.cachedResponse as AiRequestResult;
+      if (cached.status === 'rejected_quota') {
         throw new HttpException(
           {
             statusCode: 429,
@@ -106,33 +109,16 @@ export class QuotaService {
           429,
         );
       }
-      if (cached) {
-        return { ...cached, usage: reserve.usage, requestId };
-      }
-      return {
-        reservationId: reserve.reservationId,
-        status: 'replay',
-        usage: reserve.usage,
-        idempotencyKey: key,
-        requestId,
-      };
+      return { ...cached, usage: reserve.usage, requestId };
     }
 
     const periodId = periodIdFor(this.clock.now(), this.config.period);
 
-    let aiResult;
+    let aiResult: AiResult;
     try {
       aiResult = await this.ai.complete(body.prompt);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      aiResult = {
-        ok: false,
-        errorCode: 'AI_PROVIDER_ERROR',
-        latencyMs: 0,
-        timedOut: false,
-        text: undefined,
-      };
-      void message;
+    } catch {
+      aiResult = { ok: false, errorCode: 'AI_PROVIDER_ERROR', latencyMs: 0, timedOut: false };
     }
 
     const success = aiResult.ok && !aiResult.timedOut;
@@ -142,8 +128,24 @@ export class QuotaService {
         ? 'ai_timeout'
         : 'ai_failure';
 
+    const buildPayload = (usage: UsageSnapshot, settled: boolean): AiRequestResult => ({
+      reservationId: reserve.reservationId,
+      // If the TTL sweeper released the reservation first, the call is not billed.
+      status: success && settled ? 'committed' : 'released',
+      ai: {
+        ok: success,
+        text: aiResult.text,
+        errorCode: aiResult.errorCode,
+        timedOut: aiResult.timedOut,
+        latencyMs: aiResult.latencyMs,
+      },
+      usage,
+      idempotencyKey: key,
+      requestId,
+    });
+
     try {
-      const usage = this.ledger.settle({
+      const result = this.ledger.settle({
         reservationId: reserve.reservationId,
         userId: body.userId,
         periodId,
@@ -152,25 +154,9 @@ export class QuotaService {
         latencyMs: aiResult.latencyMs,
         errorCode: aiResult.errorCode ?? null,
         releaseReason,
-        responsePayload: null,
+        buildResponse: (usage) => buildPayload(usage, true),
       });
-
-      const payload: AiRequestResult = {
-        reservationId: reserve.reservationId,
-        status: success ? 'committed' : 'released',
-        ai: {
-          ok: success,
-          text: aiResult.text,
-          errorCode: aiResult.errorCode,
-          timedOut: aiResult.timedOut,
-          latencyMs: aiResult.latencyMs,
-        },
-        usage,
-        idempotencyKey: key,
-        requestId,
-      };
-      this.ledger.updateCachedResponse(body.userId, key, payload);
-      return payload;
+      return buildPayload(result.usage, result.settled);
     } catch (err) {
       if (err instanceof StorageUnavailableError) {
         throw new ServiceUnavailableException('Storage unavailable');

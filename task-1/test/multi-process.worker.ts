@@ -7,8 +7,7 @@ import { SystemClock } from '../src/common/clock';
 import { ControllableAiProvider } from '../src/ai/ai-provider';
 import { SqliteDatabase } from '../src/ledger/database';
 import { LedgerRepository } from '../src/ledger/ledger.repository';
-import { createHash } from 'crypto';
-import { v4 as uuidv4 } from 'uuid';
+import { createHash, randomUUID } from 'crypto';
 
 async function main(): Promise<void> {
   const [, , dbPath, userId, attemptsRaw] = process.argv;
@@ -35,7 +34,7 @@ async function main(): Promise<void> {
   let rejected = 0;
 
   for (let i = 0; i < attempts; i++) {
-    const idem = uuidv4();
+    const idem = randomUUID();
     const hash = createHash('sha256')
       .update(`${userId}:${i}:${process.pid}`)
       .digest('hex');
@@ -43,7 +42,7 @@ async function main(): Promise<void> {
       const reserve = ledger.reserve({
         userId,
         idempotencyKey: idem,
-        requestId: uuidv4(),
+        requestId: randomUUID(),
         requestHash: hash,
       });
       if (reserve.kind === 'rejected') {
@@ -61,7 +60,7 @@ async function main(): Promise<void> {
           latencyMs: 1,
           errorCode: null,
           releaseReason: null,
-          responsePayload: { ok: true },
+          buildResponse: () => ({ ok: true }),
         });
         committed += 1;
       }

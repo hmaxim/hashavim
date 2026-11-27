@@ -1,11 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { APP_CONFIG, AppConfig } from '../config/app-config';
 import { CLOCK, Clock } from '../common/clock';
 import { periodBounds, periodIdFor } from '../common/period';
 import { SqliteDatabase } from './database';
 import {
   IdempotencyConflictError,
+  IdempotencyInProgressError,
   IdempotencyRecord,
   LedgerRow,
   ReconcileDrift,
@@ -35,7 +36,14 @@ export interface SettleInput {
   latencyMs: number;
   errorCode: string | null;
   releaseReason: string | null;
-  responsePayload: unknown;
+  /** Builds the idempotency replay body; stored in the same transaction as the settle row. */
+  buildResponse: (usage: UsageSnapshot) => unknown;
+}
+
+export interface SettleResult {
+  usage: UsageSnapshot;
+  /** False when the reservation was already terminal (e.g. released by TTL). */
+  settled: boolean;
 }
 
 @Injectable()
@@ -174,7 +182,7 @@ export class LedgerRepository {
         continue;
       }
 
-      const usageId = uuidv4();
+      const usageId = randomUUID();
       try {
         this.sqlite.db
           .prepare(
@@ -236,8 +244,13 @@ export class LedgerRepository {
     return this.sqlite.withImmediateTransaction(() => {
       const rows = this.sqlite.db
         .prepare(
-          `SELECT DISTINCT user_id, period_id FROM usage_ledger
-           WHERE status = 'RESERVED' AND expire_at IS NOT NULL AND expire_at <= ?`,
+          `SELECT DISTINCT r.user_id, r.period_id FROM usage_ledger r
+           WHERE r.status = 'RESERVED' AND r.expire_at IS NOT NULL AND r.expire_at <= ?
+             AND NOT EXISTS (
+               SELECT 1 FROM usage_ledger t
+               WHERE t.reservation_id = r.reservation_id
+                 AND t.status IN ('COMMITTED', 'RELEASED')
+             )`,
         )
         .all(nowIso) as Array<{ user_id: string; period_id: string }>;
       let total = 0;
@@ -270,14 +283,17 @@ export class LedgerRepository {
             'Idempotency-Key reused with a different payload',
           );
         }
+        if (existing.terminal === 0 || !existing.response_json) {
+          throw new IdempotencyInProgressError(
+            'A request with this Idempotency-Key is still in progress',
+          );
+        }
         const usage = this.buildUsageSnapshot(input.userId, periodId);
         return {
           kind: 'replay' as const,
           reservationId: existing.reservation_id,
           usage,
-          cachedResponse: existing.response_json
-            ? (JSON.parse(existing.response_json) as unknown)
-            : undefined,
+          cachedResponse: JSON.parse(existing.response_json) as unknown,
         };
       }
 
@@ -285,8 +301,8 @@ export class LedgerRepository {
       const used = this.readCounter(input.userId, periodId);
 
       if (used >= limit) {
-        const reservationId = uuidv4();
-        const usageId = uuidv4();
+        const reservationId = randomUUID();
+        const usageId = randomUUID();
         this.sqlite.db
           .prepare(
             `INSERT INTO usage_ledger(
@@ -333,8 +349,8 @@ export class LedgerRepository {
         };
       }
 
-      const reservationId = uuidv4();
-      const usageId = uuidv4();
+      const reservationId = randomUUID();
+      const usageId = randomUUID();
       const expireAt = new Date(
         now.getTime() + this.config.reservationTtlSeconds * 1000,
       ).toISOString();
@@ -389,7 +405,7 @@ export class LedgerRepository {
     });
   }
 
-  settle(input: SettleInput): UsageSnapshot {
+  settle(input: SettleInput): SettleResult {
     const nowIso = this.clock.now().toISOString();
 
     return this.sqlite.withImmediateTransaction(() => {
@@ -402,86 +418,57 @@ export class LedgerRepository {
 
       const terminal = this.sqlite.db
         .prepare(
-          `SELECT * FROM usage_ledger
+          `SELECT 1 AS ok FROM usage_ledger
            WHERE reservation_id = ? AND status IN ('COMMITTED','RELEASED') LIMIT 1`,
         )
-        .get(input.reservationId) as LedgerRow | undefined;
+        .get(input.reservationId) as { ok: number } | undefined;
 
-      if (terminal) {
-        // Already settled (including TTL release). Ignore late completion.
-        return this.buildUsageSnapshot(input.userId, input.periodId);
+      // Already settled (e.g. TTL release won the race): ignore the late completion.
+      if (terminal || !reserveRow) {
+        return {
+          usage: this.buildUsageSnapshot(input.userId, input.periodId),
+          settled: false,
+        };
       }
 
-      if (!reserveRow) {
-        return this.buildUsageSnapshot(input.userId, input.periodId);
-      }
+      this.sqlite.db
+        .prepare(
+          `INSERT INTO usage_ledger(
+            usage_id, user_id, idempotency_key, request_id, period_id, status,
+            reservation_id, credits, limit_at_time_of_use, created_at, settled_at,
+            ai_outcome, latency_ms, error_code, request_hash, expire_at, release_reason
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+        )
+        .run(
+          randomUUID(),
+          reserveRow.user_id,
+          reserveRow.idempotency_key,
+          reserveRow.request_id,
+          reserveRow.period_id,
+          input.success ? 'COMMITTED' : 'RELEASED',
+          input.reservationId,
+          input.success ? 1 : 0,
+          reserveRow.limit_at_time_of_use,
+          nowIso,
+          nowIso,
+          input.aiOutcome,
+          input.latencyMs,
+          input.success ? null : input.errorCode,
+          reserveRow.request_hash,
+          input.success ? null : input.releaseReason,
+        );
 
-      const usageId = uuidv4();
-      if (input.success) {
+      // The counter already holds this credit from RESERVE; only a release gives it back.
+      if (!input.success) {
         this.sqlite.db
           .prepare(
-            `INSERT INTO usage_ledger(
-              usage_id, user_id, idempotency_key, request_id, period_id, status,
-              reservation_id, credits, limit_at_time_of_use, created_at, settled_at,
-              ai_outcome, latency_ms, error_code, request_hash, expire_at, release_reason
-            ) VALUES (?, ?, ?, ?, ?, 'COMMITTED', ?, 1, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL)`,
+            `UPDATE quota_counters SET used = used - 1
+             WHERE user_id = ? AND period_id = ? AND used > 0`,
           )
-          .run(
-            usageId,
-            reserveRow.user_id,
-            reserveRow.idempotency_key,
-            reserveRow.request_id,
-            reserveRow.period_id,
-            input.reservationId,
-            reserveRow.limit_at_time_of_use,
-            nowIso,
-            nowIso,
-            input.aiOutcome,
-            input.latencyMs,
-            reserveRow.request_hash,
-          );
-        // Counter already includes this credit from RESERVE; no change.
-      } else {
-        try {
-          this.sqlite.db
-            .prepare(
-              `INSERT INTO usage_ledger(
-                usage_id, user_id, idempotency_key, request_id, period_id, status,
-                reservation_id, credits, limit_at_time_of_use, created_at, settled_at,
-                ai_outcome, latency_ms, error_code, request_hash, expire_at, release_reason
-              ) VALUES (?, ?, ?, ?, ?, 'RELEASED', ?, 0, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
-            )
-            .run(
-              usageId,
-              reserveRow.user_id,
-              reserveRow.idempotency_key,
-              reserveRow.request_id,
-              reserveRow.period_id,
-              input.reservationId,
-              reserveRow.limit_at_time_of_use,
-              nowIso,
-              nowIso,
-              input.aiOutcome,
-              input.latencyMs,
-              input.errorCode,
-              reserveRow.request_hash,
-              input.releaseReason,
-            );
-          this.sqlite.db
-            .prepare(
-              `UPDATE quota_counters SET used = used - 1
-               WHERE user_id = ? AND period_id = ? AND used > 0`,
-            )
-            .run(reserveRow.user_id, reserveRow.period_id);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          if (message.includes('UNIQUE')) {
-            return this.buildUsageSnapshot(input.userId, input.periodId);
-          }
-          throw err;
-        }
+          .run(reserveRow.user_id, reserveRow.period_id);
       }
 
+      const usage = this.buildUsageSnapshot(input.userId, reserveRow.period_id);
       this.sqlite.db
         .prepare(
           `UPDATE idempotency_index
@@ -489,58 +476,12 @@ export class LedgerRepository {
            WHERE user_id = ? AND idempotency_key = ?`,
         )
         .run(
-          JSON.stringify(input.responsePayload),
+          JSON.stringify(input.buildResponse(usage)),
           reserveRow.user_id,
           reserveRow.idempotency_key,
         );
 
-      return this.buildUsageSnapshot(input.userId, reserveRow.period_id);
-    });
-  }
-
-  updateCachedResponse(
-    userId: string,
-    idempotencyKey: string,
-    responsePayload: unknown,
-  ): void {
-    this.sqlite.db
-      .prepare(
-        `UPDATE idempotency_index SET response_json = ?, terminal = 1
-         WHERE user_id = ? AND idempotency_key = ?`,
-      )
-      .run(JSON.stringify(responsePayload), userId, idempotencyKey);
-  }
-
-  getReservationMeta(
-    reservationId: string,
-  ): { userId: string; periodId: string; idempotencyKey: string } | null {
-    const row = this.sqlite.db
-      .prepare(
-        `SELECT user_id, period_id, idempotency_key FROM usage_ledger
-         WHERE reservation_id = ? AND status = 'RESERVED' LIMIT 1`,
-      )
-      .get(reservationId) as
-      | { user_id: string; period_id: string; idempotency_key: string }
-      | undefined;
-    if (!row) {
-      return null;
-    }
-    return {
-      userId: row.user_id,
-      periodId: row.period_id,
-      idempotencyKey: row.idempotency_key,
-    };
-  }
-
-  /** Inject counter drift for tests / reconcile demo. */
-  injectCounterDrift(userId: string, periodId: string, delta: number): void {
-    this.sqlite.withImmediateTransaction(() => {
-      this.ensureCounter(userId, periodId);
-      this.sqlite.db
-        .prepare(
-          `UPDATE quota_counters SET used = used + ? WHERE user_id = ? AND period_id = ?`,
-        )
-        .run(delta, userId, periodId);
+      return { usage, settled: true };
     });
   }
 
@@ -565,32 +506,5 @@ export class LedgerRepository {
       }
     }
     return drifts;
-  }
-
-  tryMutateLedgerForTest(usageId: string): string {
-    try {
-      this.sqlite.db
-        .prepare(`UPDATE usage_ledger SET credits = 99 WHERE usage_id = ?`)
-        .run(usageId);
-      return 'updated';
-    } catch (err) {
-      return err instanceof Error ? err.message : String(err);
-    }
-  }
-
-  tryDeleteLedgerForTest(usageId: string): string {
-    try {
-      this.sqlite.db.prepare(`DELETE FROM usage_ledger WHERE usage_id = ?`).run(usageId);
-      return 'deleted';
-    } catch (err) {
-      return err instanceof Error ? err.message : String(err);
-    }
-  }
-
-  getFirstUsageId(userId: string): string | undefined {
-    const row = this.sqlite.db
-      .prepare(`SELECT usage_id FROM usage_ledger WHERE user_id = ? LIMIT 1`)
-      .get(userId) as { usage_id: string } | undefined;
-    return row?.usage_id;
   }
 }

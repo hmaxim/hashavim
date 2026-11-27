@@ -38,6 +38,7 @@ export async function createTestApp(
     aiTimeoutMs: 2000,
     reservationTtlSeconds: 30,
     sweeperIntervalMs: 60_000,
+    adminToken: ADMIN_TOKEN,
     ...overrides,
   };
   const clock = new FakeClock(new Date('2024-06-15T12:00:00.000Z'));
@@ -88,3 +89,42 @@ export async function createTestApp(
 }
 
 export { AI_PROVIDER };
+
+export const ADMIN_TOKEN = 'test-admin-token';
+
+/** Test-only DB probes; kept out of LedgerRepository so production code cannot call them. */
+export function injectCounterDrift(
+  sqlite: SqliteDatabase,
+  userId: string,
+  periodId: string,
+  delta: number,
+): void {
+  sqlite.db
+    .prepare(
+      `INSERT INTO quota_counters(user_id, period_id, used) VALUES (?, ?, 0)
+       ON CONFLICT(user_id, period_id) DO NOTHING`,
+    )
+    .run(userId, periodId);
+  sqlite.db
+    .prepare('UPDATE quota_counters SET used = used + ? WHERE user_id = ? AND period_id = ?')
+    .run(delta, userId, periodId);
+}
+
+export function firstUsageId(sqlite: SqliteDatabase, userId: string): string {
+  const row = sqlite.db
+    .prepare('SELECT usage_id FROM usage_ledger WHERE user_id = ? LIMIT 1')
+    .get(userId) as { usage_id: string } | undefined;
+  if (!row) {
+    throw new Error(`no ledger row for ${userId}`);
+  }
+  return row.usage_id;
+}
+
+export function errorMessageOf(fn: () => unknown): string {
+  try {
+    fn();
+    return 'no error';
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}

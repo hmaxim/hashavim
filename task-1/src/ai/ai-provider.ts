@@ -26,8 +26,11 @@ export class SimulatedAiProvider implements AiProvider {
         Math.random() * (this.config.aiMaxDelayMs - this.config.aiMinDelayMs + 1),
       );
 
+    let workTimer: NodeJS.Timeout | undefined;
+    let timeoutTimer: NodeJS.Timeout | undefined;
+
     const work = new Promise<AiResult>((resolve) => {
-      setTimeout(() => {
+      workTimer = setTimeout(() => {
         const fail = Math.random() < this.config.aiFailureRate;
         if (fail) {
           resolve({
@@ -48,7 +51,7 @@ export class SimulatedAiProvider implements AiProvider {
     });
 
     const timeout = new Promise<AiResult>((resolve) => {
-      setTimeout(() => {
+      timeoutTimer = setTimeout(() => {
         resolve({
           ok: false,
           errorCode: 'AI_TIMEOUT',
@@ -58,7 +61,12 @@ export class SimulatedAiProvider implements AiProvider {
       }, this.config.aiTimeoutMs);
     });
 
-    return Promise.race([work, timeout]);
+    try {
+      return await Promise.race([work, timeout]);
+    } finally {
+      clearTimeout(workTimer);
+      clearTimeout(timeoutTimer);
+    }
   }
 }
 

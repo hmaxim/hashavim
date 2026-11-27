@@ -72,7 +72,7 @@ SQLite triggers reject `UPDATE`/`DELETE` on the ledger. State changes are new ro
 
 1. **RESERVE** (one `BEGIN IMMEDIATE` TX): expire stale reservations for the user/period; resolve limit; if idempotency hit, return cached outcome; if `used >= limit`, append `REJECTED_QUOTA` (credits 0) and return 429; else insert `RESERVED`, bump counter, store hash/response stub.
 2. **EXECUTE**: call simulated AI outside any TX (random delay, failure rate, hard timeout). No retries.
-3. **SETTLE** (separate TX): if reservation already terminal, no-op (idempotent). On success append `COMMITTED` (counter stays). On failure/timeout append `RELEASED` and decrement counter. Partial unique index + status check prevent late double-settle after TTL release.
+3. **SETTLE** (separate TX): if reservation already terminal, no-op (idempotent). On success append `COMMITTED` (counter stays). On failure/timeout append `RELEASED` and decrement counter. The idempotency replay body is written in the same TX. Partial unique index + status check prevent late double-settle after TTL release. Startup requires the reservation TTL to be longer than the AI timeout, so the sweeper cannot release a call that is still running.
 
 Counter invariant: `used = count(COMMITTED) + count(non-expired RESERVED)` for the period. `RELEASED` and `REJECTED_QUOTA` do not count. `npm run reconcile` verifies and reports drift.
 
@@ -82,6 +82,7 @@ Counter invariant: `used = count(COMMITTED) + count(non-expired RESERVED)` for t
 | --- | --- |
 | N parallel at last credit | `BEGIN IMMEDIATE` serializes; exactly one reserves |
 | Client retries | Same `Idempotency-Key` returns original result; no extra charge |
+| Same key while first call runs | 409 "in progress"; client retries and then gets the stored result |
 | Same key, different payload | 409 Conflict |
 | AI failure | `RELEASED`; evidence kept; credit returned |
 | AI timeout + late result | Timeout releases; late settle sees terminal and skips |
