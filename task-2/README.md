@@ -11,7 +11,7 @@ cd task-2
 npm start
 ```
 
-`npm start` installs dependencies if `node_modules` is missing, builds if `.next` is missing, then serves on `PORT` (default `3000`).
+`npm start` installs dependencies if `node_modules` is missing, builds if there is no production build (`.next/BUILD_ID`; a `.next` from `npm run dev` does not count), then serves on `PORT` (default `3000`).
 
 ```bash
 npm run dev    # hot reload
@@ -50,7 +50,7 @@ Mock timer ───────────────────────
 
 **Derived data stays in sync** because it is never stored — only recomputed from `tasksById` when that reference changes.
 
-**Optimistic reconciliation:** the client applies a tagged mutation immediately, POSTs/PATCHes/DELETEs, then on the SSE echo replaces the pending log row and server task version. Failed requests roll back only fields that still hold the optimistic value. `seq` gaps force reconnect + snapshot; pending mutations are re-applied on top.
+**Optimistic reconciliation:** the client applies a tagged mutation immediately, POSTs/PATCHes/DELETEs, then on the SSE echo replaces the pending log row and server task version. Every successful mutation response also returns the server `seq` (`{ task, seq }`, `{ noop: true, seq }`, `{ seq }`); once `lastSeq` reaches it the pending edit is settled, even when no echo comes (server no-op, or the change was already in a reconnect snapshot). Failed requests roll back only fields that still hold the optimistic value. `seq` gaps force reconnect + snapshot; pending mutations are re-applied on top.
 
 **Rejected alternatives:** Redux Toolkit (heavier for this size), Context + `useReducer` (more boilerplate, harder selective subscriptions), TanStack Query alone (great for server cache, weaker for multi-panel derived local consistency), polling (laggy), WebSocket library (unnecessary dependency).
 
@@ -87,6 +87,8 @@ Mock timer ───────────────────────
 - Data resets when the process restarts.
 - Not serverless-compatible: store + SSE live in one long-lived Node process.
 - Conflict policy is last-write-wins in server `seq` order.
+- The mock pause button reads the server state on load; another tab's toggle is not pushed live.
+- After a reload, your earlier edits show as "A user" in the log (which tab made a change is not stored).
 
 ## Docs
 

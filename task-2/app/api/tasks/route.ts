@@ -44,5 +44,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
-  return NextResponse.json(result.task, { status: 201 });
+  return NextResponse.json(
+    { task: result.task, seq: result.event.seq },
+    { status: 201 },
+  );
 }

@@ -10,7 +10,8 @@ function formatValue(field: string, value: unknown): string {
 }
 
 export function formatActivity(entry: ActivityEntry): string {
-  const who = entry.source === "user" ? "You" : "Server";
+  const who =
+    entry.source === "server" ? "Server" : entry.own ? "You" : "A user";
   const title = entry.taskTitle;
 
   if (entry.type === "created") {

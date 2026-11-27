@@ -24,7 +24,8 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json({ error: validated.error }, { status: 400 });
   }
 
-  const result = getServerStore().patchTask(id, validated.value.patch, {
+  const store = getServerStore();
+  const result = store.patchTask(id, validated.value.patch, {
     mutationId: validated.value.mutationId,
     source: "user",
   });
@@ -33,11 +34,12 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
 
+  // `seq` lets the client settle its pending edit even if no echo follows.
   if (result.noop) {
-    return NextResponse.json({ noop: true });
+    return NextResponse.json({ noop: true, seq: store.getSeq() });
   }
 
-  return NextResponse.json(result.task);
+  return NextResponse.json({ task: result.task, seq: result.event.seq });
 }
 
 export async function DELETE(request: Request, context: RouteContext) {
@@ -55,5 +57,5 @@ export async function DELETE(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
 
-  return new NextResponse(null, { status: 204 });
+  return NextResponse.json({ seq: result.event.seq });
 }

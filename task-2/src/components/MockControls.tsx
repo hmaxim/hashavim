@@ -1,30 +1,42 @@
 "use client";
 
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import styles from "./board.module.css";
 
+async function mockRequest(
+  method: "GET" | "POST",
+  query = "",
+): Promise<{ paused?: boolean } | null> {
+  try {
+    const res = await fetch(`/api/mock/tick${query}`, { method });
+    return res.ok ? ((await res.json()) as { paused?: boolean }) : null;
+  } catch {
+    return null;
+  }
+}
+
 export const MockControls = memo(function MockControls() {
-  const [paused, setPaused] = useState(false);
+  // Pause lives on the server; null until we know its current value.
+  const [paused, setPaused] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    void mockRequest("GET").then((body) => {
+      if (typeof body?.paused === "boolean") setPaused(body.paused);
+    });
+  }, []);
 
   return (
     <div className={styles.mockControls}>
-      <button
-        type="button"
-        onClick={async () => {
-          await fetch("/api/mock/tick", { method: "POST" });
-        }}
-      >
+      <button type="button" onClick={() => void mockRequest("POST")}>
         Tick mock update
       </button>
       <button
         type="button"
+        disabled={paused === null}
         onClick={async () => {
           const action = paused ? "resume" : "pause";
-          const res = await fetch(`/api/mock/tick?action=${action}`, {
-            method: "POST",
-          });
-          const body = (await res.json()) as { paused: boolean };
-          setPaused(body.paused);
+          const body = await mockRequest("POST", `?action=${action}`);
+          if (typeof body?.paused === "boolean") setPaused(body.paused);
         }}
       >
         {paused ? "Resume server updates" : "Pause server updates"}

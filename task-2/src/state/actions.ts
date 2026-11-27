@@ -37,6 +37,26 @@ async function parseError(res: Response): Promise<string> {
   }
 }
 
+/** Tells the store which server seq contains this mutation. */
+async function acknowledge(
+  store: BoardStoreApi,
+  mutationId: string,
+  res: Response,
+): Promise<void> {
+  try {
+    const body = (await res.json()) as { seq?: unknown; noop?: unknown };
+    if (typeof body.seq !== "number") return;
+    store.getState().dispatch({
+      type: "ack",
+      mutationId,
+      seq: body.seq,
+      noop: body.noop === true,
+    });
+  } catch {
+    // No body: the SSE echo still settles the mutation.
+  }
+}
+
 export async function addTask(
   store: BoardStoreApi,
   input: {
@@ -95,6 +115,7 @@ export async function addTask(
       store.getState().dispatch({ type: "markFailed", mutationId });
       return { message: await parseError(res) };
     }
+    await acknowledge(store, mutationId, res);
     return null;
   } catch {
     store.getState().dispatch({ type: "markFailed", mutationId });
@@ -166,6 +187,7 @@ export async function updateTask(
       store.getState().dispatch({ type: "markFailed", mutationId });
       return { message: await parseError(res) };
     }
+    await acknowledge(store, mutationId, res);
     return null;
   } catch {
     store.getState().dispatch({ type: "markFailed", mutationId });
@@ -215,6 +237,7 @@ export async function deleteTask(
       store.getState().dispatch({ type: "markFailed", mutationId });
       return { message: await parseError(res) };
     }
+    await acknowledge(store, mutationId, res);
     return null;
   } catch {
     store.getState().dispatch({ type: "markFailed", mutationId });

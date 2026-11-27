@@ -49,8 +49,6 @@ export type ServerStore = {
     opts?: { mutationId?: string; source?: "user" | "server"; now?: string },
   ) => DeleteResult;
   subscribe: (listener: ServerListener) => () => void;
-  /** Test helper: reset to seed. */
-  reset: (tasks?: Task[]) => void;
   getSeq: () => number;
 };
 
@@ -66,24 +64,16 @@ function buildChanges(task: Task, patch: TaskPatch) {
 }
 
 export function createServerStore(initialTasks?: Task[]): ServerStore {
-  let tasksById: Record<string, Task> = {};
+  const tasksById: Record<string, Task> = {};
   let order: string[] = [];
   let activity: ActivityEntry[] = [];
   let seq = 0;
   const listeners = new Set<ServerListener>();
 
-  function load(tasks: Task[]) {
-    tasksById = {};
-    order = [];
-    for (const task of tasks) {
-      tasksById[task.id] = task;
-      order.push(task.id);
-    }
-    activity = [];
-    seq = 0;
+  for (const task of initialTasks ?? createSeedTasks()) {
+    tasksById[task.id] = task;
+    order.push(task.id);
   }
-
-  load(initialTasks ?? createSeedTasks());
 
   function notify(event: TaskEvent) {
     for (const listener of listeners) {
@@ -105,9 +95,6 @@ export function createServerStore(initialTasks?: Task[]): ServerStore {
     },
     getSeq() {
       return seq;
-    },
-    reset(tasks) {
-      load(tasks ?? createSeedTasks());
     },
     createTask(params) {
       if (tasksById[params.id]) {

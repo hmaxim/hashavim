@@ -421,4 +421,90 @@ describe("selectors", () => {
     expect(selectCountsByStatus(fresh)).toEqual(byStatus);
     expect(selectCountsByAssignee(fresh)).toEqual(byAssignee);
   });
+
+  function optimisticDone(state: ReturnType<typeof emptyBoardState>) {
+    return applyEvent(state, {
+      type: "optimistic.update",
+      taskId: "t1",
+      patch: { status: "done" },
+      previous: { status: "todo" },
+      mutationId: "m1",
+      activity: {
+        id: "local",
+        at: "2026-01-01T00:00:00.000Z",
+        source: "user",
+        type: "updated",
+        taskId: "t1",
+        taskTitle: "One",
+        changes: [{ field: "status", from: "todo", to: "done" }],
+        mutationId: "m1",
+      },
+    });
+  }
+
+  it("settles a no-op edit from its HTTP ack so later server changes win", () => {
+    // The server already had status=done (the mock set it at seq 1) but the
+    // tab had not seen that event yet, so the PATCH is a no-op with no echo.
+    let state = optimisticDone(
+      stateFromSnapshot({ tasks: [task({ id: "t1", title: "One" })], activity: [], seq: 0 }),
+    );
+    state = applyEvent(state, { type: "ack", mutationId: "m1", seq: 1, noop: true });
+    expect(state.pendingMutations.m1?.ackSeq).toBe(1);
+
+    state = applyEvent(state, {
+      type: "server",
+      event: serverEvent({
+        seq: 1,
+        type: "task.updated",
+        taskId: "t1",
+        task: task({ id: "t1", title: "One", status: "done" }),
+      }),
+    });
+    expect(state.pendingMutations).toEqual({});
+    expect(state.activity.some((a) => a.mutationId === "m1")).toBe(false);
+
+    state = applyEvent(state, {
+      type: "server",
+      event: serverEvent({
+        seq: 2,
+        type: "task.updated",
+        taskId: "t1",
+        task: task({ id: "t1", title: "One", status: "todo" }),
+      }),
+    });
+    expect(state.tasksById.t1?.status).toBe("todo");
+  });
+
+  it("settles an edit whose echo was folded into a reconnect snapshot", () => {
+    let state = optimisticDone(
+      stateFromSnapshot({ tasks: [task({ id: "t1", title: "One" })], activity: [], seq: 0 }),
+    );
+    state = applyEvent(state, {
+      type: "snapshot",
+      snapshot: {
+        tasks: [task({ id: "t1", title: "One", status: "done" })],
+        activity: [],
+        seq: 5,
+      },
+    });
+    expect(state.pendingMutations.m1).toBeDefined();
+
+    // HTTP response arrives after the snapshot: seq 5 is already in our copy.
+    state = applyEvent(state, { type: "ack", mutationId: "m1", seq: 5, noop: false });
+    expect(state.pendingMutations).toEqual({});
+    const row = state.activity.find((a) => a.mutationId === "m1");
+    expect(row?.pending).toBe(false);
+    expect(row?.own).toBe(true);
+
+    state = applyEvent(state, {
+      type: "server",
+      event: serverEvent({
+        seq: 6,
+        type: "task.updated",
+        taskId: "t1",
+        task: task({ id: "t1", title: "One", status: "todo" }),
+      }),
+    });
+    expect(state.tasksById.t1?.status).toBe("todo");
+  });
 });

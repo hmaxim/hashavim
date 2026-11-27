@@ -8,12 +8,7 @@ import {
 } from "react";
 import { createStore, useStore } from "zustand";
 import type { BoardState, Snapshot } from "@/src/lib/types";
-import {
-  applyEvent,
-  emptyBoardState,
-  stateFromSnapshot,
-  type BoardEvent,
-} from "./reducer";
+import { applyEvent, stateFromSnapshot, type BoardEvent } from "./reducer";
 
 export type BoardStore = BoardState & {
   dispatch: (event: BoardEvent) => void;
@@ -21,16 +16,9 @@ export type BoardStore = BoardState & {
 
 export type BoardStoreApi = ReturnType<typeof createBoardStore>;
 
-export function createBoardStore(initial?: Snapshot | BoardState) {
-  const initialState: BoardState =
-    initial && "tasks" in initial
-      ? stateFromSnapshot(initial)
-      : initial
-        ? (initial as BoardState)
-        : emptyBoardState();
-
+export function createBoardStore(initial: Snapshot) {
   return createStore<BoardStore>((set) => ({
-    ...initialState,
+    ...stateFromSnapshot(initial),
     dispatch: (event) => {
       set((state) => {
         const { dispatch, ...board } = state;

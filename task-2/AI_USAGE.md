@@ -10,8 +10,9 @@ I used **Cursor (Composer)** in this session for design drafting from the Task 2
 
 ## How it was verified
 
-- `npm test` — 28 tests passing (reducer, actions failure paths, server store, SSE stream, Board integration, randomized selector invariants).
+- `npm test` — 35 tests passing (reducer, actions failure paths, server store and mock, SSE stream, activity labels, Board integration, randomized selector invariants).
 - An audit pass (ponytail-audit) found an SSE connect race, a rapid-edit flicker, untested failure paths, and an unguarded `JSON.parse`; all were fixed with tests (see DECISIONS.md, "Audit follow-up").
+- A second audit pass found pending edits that never settled (server no-op, or echo inside a reconnect snapshot), `npm start` failing after `npm run dev`, "You" shown for other tabs' edits, a tab-local pause label, an over-long mock title, and a NaN mock delay. All were fixed; `npm start` and the new response `seq` were checked with curl against a running server.
 - `npx tsc --noEmit`
 - `npm run build` / `npm start` after docs
 - Line-by-line read of reducer, actions, SSE hook, and server store against the skill’s invariants

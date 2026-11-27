@@ -241,6 +241,44 @@ describe("Board integration", () => {
     }
   });
 
+  it("reconnects for a fresh snapshot when an SSE seq is skipped", () => {
+    vi.useFakeTimers();
+    try {
+      render(<TestBoard />);
+      const first = FakeEventSource.instances.at(-1)!;
+      act(() => first.emit("snapshot", seedSnapshot));
+
+      act(() =>
+        first.emit("event", {
+          seq: 2,
+          type: "task.deleted",
+          taskId: "11111111-1111-4111-8111-111111111111",
+          activity: {
+            id: "gap",
+            at: "2026-01-01T00:00:00.000Z",
+            source: "server",
+            type: "deleted",
+            taskId: "11111111-1111-4111-8111-111111111111",
+            taskTitle: "Alpha",
+            changes: [],
+          },
+        } satisfies TaskEvent),
+      );
+      expect(first.closed).toBe(true);
+      // The gapped event is not applied.
+      expect(
+        within(listPanel()).getByRole("button", { name: "Alpha" }),
+      ).toBeInTheDocument();
+
+      act(() => vi.advanceTimersByTime(250));
+      const second = FakeEventSource.instances.at(-1)!;
+      expect(second).not.toBe(first);
+      expect(second.closed).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("resyncs on reconnect and keeps a pending mutation", async () => {
     function WithPending() {
       const store = useBoardStoreApi();
