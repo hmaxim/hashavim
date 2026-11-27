@@ -11,6 +11,8 @@ export interface AppConfig {
   aiTimeoutMs: number;
   reservationTtlSeconds: number;
   sweeperIntervalMs: number;
+  /** Required in the `x-admin-token` header for admin routes; null disables them. */
+  adminToken: string | null;
 }
 
 function requireInt(name: string, raw: string | undefined, fallback: number): number {
@@ -64,6 +66,13 @@ export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (reservationTtlSeconds <= 0) {
     throw new Error('RESERVATION_TTL_SECONDS must be > 0');
   }
+  // A reservation must outlive the AI call, or the sweeper releases it while
+  // the call is still running and a later success is never billed.
+  if (reservationTtlSeconds * 1000 <= aiTimeoutMs) {
+    throw new Error(
+      `RESERVATION_TTL_SECONDS (${reservationTtlSeconds}s) must be longer than AI_TIMEOUT_MS (${aiTimeoutMs}ms)`,
+    );
+  }
 
   const port = requireInt('PORT', env.PORT, 3000);
   if (port <= 0 || port > 65535) {
@@ -76,6 +85,7 @@ export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
 
   const dbPath = env.DB_PATH?.trim() || './data/usage.db';
+  const adminToken = env.ADMIN_TOKEN?.trim() || null;
 
   return {
     port,
@@ -88,6 +98,7 @@ export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     aiTimeoutMs,
     reservationTtlSeconds,
     sweeperIntervalMs,
+    adminToken,
   };
 }
 

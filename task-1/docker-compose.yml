@@ -14,6 +14,8 @@ services:
       AI_TIMEOUT_MS: "${AI_TIMEOUT_MS:-2000}"
       RESERVATION_TTL_SECONDS: "${RESERVATION_TTL_SECONDS:-30}"
       SWEEPER_INTERVAL_MS: "${SWEEPER_INTERVAL_MS:-5000}"
+      # Unset disables the admin limit route.
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-}"
     volumes:
       - usage_data:/data
     # Single replica only: SQLite is not safe for multi-writer scale-out.

@@ -51,8 +51,9 @@ docker compose down -v
 | `AI_MIN_DELAY_MS` | `50` | Min simulated AI latency |
 | `AI_MAX_DELAY_MS` | `500` | Max simulated AI latency |
 | `AI_TIMEOUT_MS` | `2000` | Hard AI timeout |
-| `RESERVATION_TTL_SECONDS` | `30` | Stuck `RESERVED` expiry |
+| `RESERVATION_TTL_SECONDS` | `30` | Stuck `RESERVED` expiry; must be longer than `AI_TIMEOUT_MS` |
 | `SWEEPER_INTERVAL_MS` | `5000` | Background expiry interval |
+| `ADMIN_TOKEN` | unset | Secret for `PUT /v1/users/:userId/limit` (header `x-admin-token`); admin route returns 403 when unset |
 
 See [`.env.example`](.env.example). Bad config fails fast at startup.
 
@@ -69,8 +70,10 @@ curl -sS -X POST http://localhost:3000/v1/ai/requests \
 curl -sS 'http://localhost:3000/v1/users/alice/usage?includeRecent=true'
 
 # Per-user limit override
+# (start the server with ADMIN_TOKEN=change-me)
 curl -sS -X PUT http://localhost:3000/v1/users/alice/limit \
   -H 'content-type: application/json' \
+  -H 'x-admin-token: change-me' \
   -d '{"limit":10}'
 
 # Health
@@ -81,10 +84,10 @@ curl -sS http://localhost:3000/health
 
 - `POST /v1/ai/requests` with reserve → simulated AI → settle
 - `GET /v1/users/:userId/usage` (limit, used, pending, remaining, period, optional recent ledger)
-- `PUT /v1/users/:userId/limit` per-user override
+- `PUT /v1/users/:userId/limit` per-user override, protected by `ADMIN_TOKEN`
 - Append-only ledger with SQLite triggers blocking `UPDATE`/`DELETE`
 - Atomic `BEGIN IMMEDIATE` quota transactions (never spanning AI `await`)
-- Idempotency-Key (auto UUID if omitted); payload mismatch → 409
+- Idempotency-Key (auto UUID if omitted); payload mismatch → 409; duplicate while the first call is in flight → 409
 - 429 on quota exceeded; 503 if storage unavailable (fail-closed)
 - TTL expiry (lazy + sweeper) for stuck reservations
 - Fixed UTC daily/monthly periods; mid-period limit changes; auto-create users
@@ -103,7 +106,7 @@ curl -sS http://localhost:3000/health
 | Circuit breaker / AI retries | Retries risk double-charge | Idempotent provider calls + breaker |
 | Postgres / Redis scale-out | Local SQLite only | Counter CAS + partitioned ledger |
 | Outbox for settle-after-AI-success | Rare path; TTL + idempotent retry covers demo | Durable outbox + worker |
-| Auth / abuse rate limits | Out of scope vs quota | API keys + edge rate limits |
+| User auth / abuse rate limits | Out of scope vs quota (admin route has a shared token only) | API keys + edge rate limits |
 | Multi-replica Docker | SQLite single-writer | One replica or move to Postgres |
 
 ## Known limitations

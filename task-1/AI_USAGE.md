@@ -9,6 +9,7 @@
 
 - **Mostly agent-generated then edited:** Nest app layout, ledger schema/triggers, reserve/settle, sweeper, e2e tests, Dockerfiles, README/DECISIONS/DESIGN.
 - **Corrected after review (agent):** throwing `QuotaExceeded` inside the reserve transaction (would roll back evidence) → return `rejected` then HTTP 429 outside the TX; pending count including settled `RESERVED` rows → exclude terminal siblings; in-flight pending test timing → gated AI provider.
+- **Fixed after an agent-run audit:** same-key request during an in-flight call returned an empty "replay" body → now 409; idempotency cache was written after settle in a second step → now inside the settle transaction; admin limit route had no auth → `ADMIN_TOKEN`; TTL could be shorter than the AI timeout → rejected at startup; dropped the `uuid` dependency and test-only methods on the repository.
 - **[AUTHOR TO CONFIRM]** Any edits made outside this agent session before submission.
 
 ## How the output was verified

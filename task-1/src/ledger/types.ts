@@ -66,11 +66,9 @@ export class IdempotencyConflictError extends Error {
   }
 }
 
-export class QuotaExceededError extends Error {
-  readonly usage: UsageSnapshot;
-  constructor(usage: UsageSnapshot) {
-    super('Quota exceeded');
-    this.name = 'QuotaExceededError';
-    this.usage = usage;
+export class IdempotencyInProgressError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'IdempotencyInProgressError';
   }
 }
