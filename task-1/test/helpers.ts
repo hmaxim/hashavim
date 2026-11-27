@@ -3,13 +3,13 @@ import { Test } from '@nestjs/testing';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { ControllableAiProvider, AI_PROVIDER } from '../src/ai/ai-provider';
+import { AI_PROVIDER } from '../src/ai/ai-provider';
 import { AppModule } from '../src/app.module';
 import { AllExceptionsFilter } from '../src/common/http-exception.filter';
 import { RequestIdInterceptor } from '../src/common/request-id.interceptor';
-import { FakeClock } from '../src/common/clock';
 import { AppConfig } from '../src/config/app-config';
 import { SqliteDatabase } from '../src/ledger/database';
+import { ControllableAiProvider, FakeClock } from './fakes';
 
 export interface TestApp {
   app: INestApplication;

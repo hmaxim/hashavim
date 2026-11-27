@@ -7,9 +7,6 @@ import {
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'crypto';
 import { AI_PROVIDER, AiProvider, AiResult } from '../ai/ai-provider';
-import { APP_CONFIG, AppConfig } from '../config/app-config';
-import { periodIdFor } from '../common/period';
-import { CLOCK, Clock } from '../common/clock';
 import { LedgerRepository } from '../ledger/ledger.repository';
 import {
   IdempotencyConflictError,
@@ -26,13 +23,16 @@ export interface AiRequestBody {
 export interface AiRequestResult {
   reservationId: string;
   status: 'committed' | 'released' | 'rejected_quota';
+  /** Set on TTL-released replays: `ttl_expired`. */
+  reason?: string;
+  /** Null when the AI answer was never stored (reservation released by TTL). */
   ai?: {
     ok: boolean;
     text?: string;
     errorCode?: string;
     timedOut?: boolean;
     latencyMs?: number;
-  };
+  } | null;
   usage: UsageSnapshot;
   idempotencyKey: string;
   requestId: string;
@@ -43,8 +43,6 @@ export class QuotaService {
   constructor(
     private readonly ledger: LedgerRepository,
     @Inject(AI_PROVIDER) private readonly ai: AiProvider,
-    @Inject(APP_CONFIG) private readonly config: AppConfig,
-    @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
   private hashPayload(userId: string, prompt: string): string {
@@ -112,8 +110,6 @@ export class QuotaService {
       return { ...cached, usage: reserve.usage, requestId };
     }
 
-    const periodId = periodIdFor(this.clock.now(), this.config.period);
-
     let aiResult: AiResult;
     try {
       aiResult = await this.ai.complete(body.prompt);
@@ -148,7 +144,7 @@ export class QuotaService {
       const result = this.ledger.settle({
         reservationId: reserve.reservationId,
         userId: body.userId,
-        periodId,
+        periodId: reserve.usage.periodId,
         success,
         aiOutcome: success ? 'success' : aiResult.timedOut ? 'timeout' : 'failure',
         latencyMs: aiResult.latencyMs,
@@ -167,15 +163,7 @@ export class QuotaService {
 
   getUsage(userId: string, includeRecent = false): UsageSnapshot {
     try {
-      // Lazy expiry before reporting.
-      const periodId = periodIdFor(this.clock.now(), this.config.period);
-      this.ledger.getDb().withImmediateTransaction(() => {
-        this.ledger.expireStaleInTx(
-          userId,
-          periodId,
-          this.clock.now().toISOString(),
-        );
-      });
+      this.ledger.expireStale(userId);
       const usage = this.ledger.buildUsageSnapshot(userId);
       if (includeRecent) {
         usage.recent = this.ledger.getRecentLedger(userId, 20);
@@ -190,7 +178,14 @@ export class QuotaService {
   }
 
   setUserLimit(userId: string, limit: number): UsageSnapshot {
-    this.ledger.setUserLimit(userId, limit);
+    try {
+      this.ledger.setUserLimit(userId, limit);
+    } catch (err) {
+      if (err instanceof StorageUnavailableError) {
+        throw new ServiceUnavailableException('Storage unavailable');
+      }
+      throw err;
+    }
     return this.getUsage(userId);
   }
 

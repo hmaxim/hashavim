@@ -94,8 +94,8 @@ curl -sS http://localhost:3000/health
 - TTL expiry (lazy + sweeper) for stuck reservations
 - Fixed UTC daily/monthly periods; mid-period limit changes; auto-create users
 - Injectable `Clock` and `AiProvider` for tests
-- `npm run reconcile` drift check
-- Structured JSON logs with `request_id`
+- `npm run reconcile` drift check (exits 1 on drift, 2 if `DB_PATH` does not exist)
+- Structured JSON logs with a server-generated `request_id` (client `x-request-id` is logged as `client_request_id`, never stored as evidence)
 - Jest + supertest suite (concurrency, multi-process SQLite, idempotency, timeout, TTL, period rollover, immutability, reconcile)
 - Optional stress suite (`npm run test:stress`): 500-way burst, sustained mixed traffic, parallel idempotent retries, 100 users racing last credit
 - Docker multi-stage image + compose volume
@@ -108,14 +108,14 @@ curl -sS http://localhost:3000/health
 | Real AI provider | Assignment asks for simulation | Swap `AiProvider` implementation |
 | Circuit breaker / AI retries | Retries risk double-charge | Idempotent provider calls + breaker |
 | Postgres / Redis scale-out | Local SQLite only | Counter CAS + partitioned ledger |
-| Outbox for settle-after-AI-success | Rare path; TTL + idempotent retry covers demo | Durable outbox + worker |
+| Outbox for settle-after-AI-success | Rare path; the call is released unbilled by TTL, but the answer is lost and the client must retry with a new key | Durable outbox + worker |
 | User auth / abuse rate limits | Out of scope vs quota (admin route has a shared token only) | API keys + edge rate limits |
 | Multi-replica Docker | SQLite single-writer | One replica or move to Postgres |
 
 ## Known limitations
 
 - Single process / single Docker replica for the SQLite file.
-- Settle failure after a successful AI call leaves `RESERVED` until TTL/sweeper or idempotent client retry; evidence of AI success may briefly show as pending.
+- Settle failure after a successful AI call returns 503 and leaves `RESERVED` (shown as pending) until TTL/sweeper releases it unbilled. Retrying with the same `Idempotency-Key` gets 409 until then and afterwards the `ttl_expired` body (`ai: null`); use a new key to get an answer.
 - Simulated AI only.
 
 ## Docs
