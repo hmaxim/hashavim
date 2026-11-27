@@ -16,7 +16,9 @@ npm start
 ### Tests
 
 ```bash
-npm test
+npm test            # default suite (excludes stress)
+npm run test:stress # burst / sustained / idempotent / multi-user races
+npm run test:all    # everything
 ```
 
 ### Reconcile counters vs ledger
@@ -95,6 +97,7 @@ curl -sS http://localhost:3000/health
 - `npm run reconcile` drift check
 - Structured JSON logs with `request_id`
 - Jest + supertest suite (concurrency, multi-process SQLite, idempotency, timeout, TTL, period rollover, immutability, reconcile)
+- Optional stress suite (`npm run test:stress`): 500-way burst, sustained mixed traffic, parallel idempotent retries, 100 users racing last credit
 - Docker multi-stage image + compose volume
 
 ## Not implemented / left out
