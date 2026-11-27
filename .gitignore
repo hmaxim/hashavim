@@ -1,5 +1,13 @@
 .DS_Store
 .env
 .env.*
+!.env.example
 *.pem
 node_modules/
+.next/
+dist/
+coverage/
+*.db
+*.db-wal
+*.db-shm
+data/
