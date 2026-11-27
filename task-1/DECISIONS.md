@@ -28,6 +28,7 @@ Cursor Agent implemented this task from the Task 1 skill: design doc, NestJS/SQL
 | TTL + sweeper for stuck RESERVED | Manual admin only | Crash between reserve and settle recovers | Brief over-hold of credit until TTL |
 | Startup rejects `RESERVATION_TTL_SECONDS` ≤ `AI_TIMEOUT_MS` | Document it only | Otherwise the sweeper releases a live call and its success is never billed | One more config rule to know |
 | Node `crypto.randomUUID()` for ids | `uuid` package | Built into Node 20; one dependency fewer | None |
+| Stress suite separate from `npm test` (`npm run test:stress`) | Always run heavy load in CI | Keeps the default suite fast; still proves quota under burst / sustained / multi-user load | Easy to forget to run stress before submit |
 | Docker as optional extra | Docker-only | `npm start` remains primary | Two run paths to maintain |
 
 ## 3. Edge cases
@@ -35,6 +36,10 @@ Cursor Agent implemented this task from the Task 1 skill: design doc, NestJS/SQL
 | Edge case | Handled? | How / why skipped | Test |
 | --- | --- | --- | --- |
 | Concurrent at limit boundary | Yes | `BEGIN IMMEDIATE` serialize | concurrency + multi-process |
+| Large burst over the limit (500 vs limit 50) | Yes | Same TX path; exactly `limit` commits; reconcile clean | stress burst |
+| Sustained mixed POST+GET across many users | Yes | Per-user counters; no cross-user bleed; reconcile clean | stress sustained waves |
+| Many parallel retries of the same idempotency keys | Yes | One reservation per key; AI called once per key | stress idempotent |
+| Many users each racing their last credit | Yes | Each user gets exactly one commit under parallel storms | stress last-credit race |
 | Client retries / Idempotency-Key | Yes | Index + cached response | idempotency replay |
 | Same key different payload | Yes | Hash compare → 409 | idempotency 409 |
 | Same key while first call is in flight | Yes | Index row not terminal → 409 "still in progress"; after settle, replay returns the stored result and the AI is called once | in-flight duplicate 409 |
@@ -84,8 +89,9 @@ Cursor Agent implemented this task from the Task 1 skill: design doc, NestJS/SQL
 
 ## 7. Known weaknesses and next steps
 
-- SQLite single-writer limits horizontal scale.
+- SQLite single-writer limits horizontal scale. Stress tests prove correctness under one-writer contention, not multi-replica throughput.
 - Settle failure after AI success is only healed by TTL/retry (add outbox).
 - Global idempotency keys may surprise callers who reuse keys across months (document or scope by period).
 - Admin auth is one shared token; production needs real identities and an audit log of limit changes.
+- Stress suite is opt-in (`npm run test:stress`); run it before claiming load safety.
 - Next: Postgres CAS counters, partitioned ledger, real provider adapter, user auth.

@@ -11,7 +11,9 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "npm run build && node dist/main.js",
     "start:dev": "ts-node src/main.ts",
-    "test": "jest --runInBand --forceExit",
+    "test": "jest --runInBand --forceExit --testPathIgnorePatterns=stress",
+    "test:stress": "jest --runInBand --forceExit --testPathPattern=stress",
+    "test:all": "jest --runInBand --forceExit",
     "reconcile": "npm run build && node dist/scripts/reconcile-cli.js",
     "lint": "tsc -p tsconfig.json --noEmit"
   },

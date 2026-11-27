@@ -6,5 +6,5 @@ module.exports = {
   testMatch: ['**/*.spec.ts', '**/*.e2e-spec.ts'],
   moduleFileExtensions: ['ts', 'js', 'json'],
   collectCoverageFrom: ['src/**/*.ts', '!src/main.ts'],
-  testTimeout: 60000,
+  testTimeout: 120000,
 };
