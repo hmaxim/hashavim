@@ -174,6 +174,56 @@ describe("applyEvent", () => {
     expect(state.activity[0]?.pending).toBeFalsy();
   });
 
+  it("keeps a newer pending edit when the echo of an older edit arrives", () => {
+    const optimisticStatus = (
+      state: ReturnType<typeof emptyBoardState>,
+      mutationId: string,
+      from: Task["status"],
+      to: Task["status"],
+    ) =>
+      applyEvent(state, {
+        type: "optimistic.update",
+        taskId: "t1",
+        patch: { status: to },
+        previous: { status: from },
+        mutationId,
+        activity: {
+          id: `p-${mutationId}`,
+          at: "2026-01-01T00:00:00.000Z",
+          source: "user",
+          type: "updated",
+          taskId: "t1",
+          taskTitle: "One",
+          changes: [{ field: "status", from, to }],
+          mutationId,
+          pending: true,
+        },
+      });
+
+    let state = stateFromSnapshot({
+      tasks: [task({ id: "t1", title: "One", status: "todo" })],
+      activity: [],
+      seq: 0,
+    });
+    state = optimisticStatus(state, "m1", "todo", "in_progress");
+    state = optimisticStatus(state, "m2", "in_progress", "done");
+
+    state = applyEvent(state, {
+      type: "server",
+      event: serverEvent({
+        seq: 1,
+        type: "task.updated",
+        taskId: "t1",
+        mutationId: "m1",
+        task: task({ id: "t1", title: "One", status: "in_progress" }),
+      }),
+    });
+
+    expect(state.tasksById.t1?.status).toBe("done");
+    expect(state.pendingMutations.m1).toBeUndefined();
+    expect(state.pendingMutations.m2).toBeDefined();
+  });
+
   it("rolls back only still-optimistic fields", () => {
     let state = stateFromSnapshot({
       tasks: [task({ id: "t1", title: "One", status: "todo", priority: "low" })],

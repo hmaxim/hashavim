@@ -10,7 +10,8 @@ I used **Cursor (Composer)** in this session for design drafting from the Task 2
 
 ## How it was verified
 
-- `npm test` — 20 tests passing (reducer, server store, Board integration, randomized selector invariants).
+- `npm test` — 28 tests passing (reducer, actions failure paths, server store, SSE stream, Board integration, randomized selector invariants).
+- An audit pass (ponytail-audit) found an SSE connect race, a rapid-edit flicker, untested failure paths, and an unguarded `JSON.parse`; all were fixed with tests (see DECISIONS.md, "Audit follow-up").
 - `npx tsc --noEmit`
 - `npm run build` / `npm start` after docs
 - Line-by-line read of reducer, actions, SSE hook, and server store against the skill’s invariants

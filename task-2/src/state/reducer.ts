@@ -139,9 +139,10 @@ function removePending(
   return rest;
 }
 
-function reapplyPending(base: BoardState): BoardState {
+function reapplyPending(base: BoardState, onlyTaskId?: string): BoardState {
   let next = base;
   for (const mutation of Object.values(base.pendingMutations)) {
+    if (onlyTaskId !== undefined && mutation.taskId !== onlyTaskId) continue;
     if (mutation.kind === "create" && mutation.taskSnapshot) {
       next = applyTaskCreated(next, mutation.taskSnapshot);
     } else if (mutation.kind === "update" && mutation.optimistic) {
@@ -201,15 +202,17 @@ function applyServerEvent(state: BoardState, event: TaskEvent): BoardState {
         pending: false,
         failed: false,
       }),
-      lastSeq: event.seq,
-      needsResync: false,
     };
-    return next;
+  } else {
+    next = {
+      ...next,
+      activity: prependActivity(next.activity, event.activity),
+    };
   }
 
+  // The server copy predates any newer optimistic edits still in flight.
   return {
-    ...next,
-    activity: prependActivity(next.activity, event.activity),
+    ...reapplyPending(next, event.taskId),
     lastSeq: event.seq,
     needsResync: false,
   };

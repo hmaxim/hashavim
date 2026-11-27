@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
-import { mulberry32LikeTick } from "@/src/server/mockTickHelper";
-import { ensureMockUpdaterStarted, tickMock } from "@/src/server/mockUpdater";
+import {
+  ensureMockUpdaterStarted,
+  mulberry32,
+  tickMock,
+} from "@/src/server/mockUpdater";
 import { getMockControl, getServerStore } from "@/src/server/store";
 
 export const runtime = "nodejs";
@@ -20,6 +23,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ paused: false });
   }
 
-  const changed = tickMock(getServerStore(), mulberry32LikeTick());
+  const changed = tickMock(getServerStore(), mulberry32(Date.now() % 1_000_000));
   return NextResponse.json({ changed });
 }

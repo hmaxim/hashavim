@@ -65,7 +65,11 @@ class FakeEventSource {
   }
 
   emit(type: string, data: unknown) {
-    const event = { data: JSON.stringify(data) } as MessageEvent;
+    this.emitRaw(type, JSON.stringify(data));
+  }
+
+  emitRaw(type: string, data: string) {
+    const event = { data } as MessageEvent;
     for (const cb of this.listeners.get(type) ?? []) cb(event);
   }
 }
@@ -83,7 +87,7 @@ function TestBoard({ snapshot = seedSnapshot }: { snapshot?: Snapshot }) {
 }
 
 function Harness() {
-  const onError = (_message: string | null) => undefined;
+  const onError = () => undefined;
   useEventStream(fakeSourceFactory);
   return (
     <div data-testid="board-root">
@@ -216,6 +220,25 @@ describe("Board integration", () => {
       expect(screen.getByText(/Server changed status of 'Alpha'/i)).toBeInTheDocument();
     });
     expect(screen.getAllByDisplayValue("in review").length).toBeGreaterThan(0);
+  });
+
+  it("reconnects instead of breaking when an SSE message is not valid JSON", () => {
+    vi.useFakeTimers();
+    try {
+      render(<TestBoard />);
+      const first = FakeEventSource.instances.at(-1)!;
+      act(() => first.emit("snapshot", seedSnapshot));
+
+      act(() => first.emitRaw("event", "{not json"));
+      expect(first.closed).toBe(true);
+
+      act(() => vi.advanceTimersByTime(1000));
+      const second = FakeEventSource.instances.at(-1)!;
+      expect(second).not.toBe(first);
+      expect(second.closed).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("resyncs on reconnect and keeps a pending mutation", async () => {
