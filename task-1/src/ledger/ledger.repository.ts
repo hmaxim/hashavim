@@ -54,10 +54,6 @@ export class LedgerRepository {
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
-  getDb(): SqliteDatabase {
-    return this.sqlite;
-  }
-
   getEffectiveLimit(userId: string): number {
     const row = this.sqlite.db
       .prepare('SELECT limit_override FROM user_limits WHERE user_id = ?')
@@ -94,20 +90,24 @@ export class LedgerRepository {
     return row?.used ?? 0;
   }
 
-  private countPending(userId: string, periodId: string, nowIso: string): number {
-    // RESERVED rows remain after settle (append-only); exclude those with a terminal row.
+  /**
+   * Open reservations (RESERVED with no terminal row; RESERVED rows stay after settle).
+   * With nowIso, only those not yet past their TTL; without it, all of them, which is
+   * what the counter holds until the expiry path appends RELEASED.
+   */
+  private countOpenReserved(userId: string, periodId: string, nowIso?: string): number {
     const row = this.sqlite.db
       .prepare(
         `SELECT COUNT(*) AS c FROM usage_ledger r
          WHERE r.user_id = ? AND r.period_id = ? AND r.status = 'RESERVED'
-           AND (r.expire_at IS NULL OR r.expire_at > ?)
+           AND (? IS NULL OR r.expire_at IS NULL OR r.expire_at > ?)
            AND NOT EXISTS (
              SELECT 1 FROM usage_ledger t
              WHERE t.reservation_id = r.reservation_id
                AND t.status IN ('COMMITTED', 'RELEASED')
            )`,
       )
-      .get(userId, periodId, nowIso) as { c: number };
+      .get(userId, periodId, nowIso ?? null, nowIso ?? null) as { c: number };
     return row.c;
   }
 
@@ -127,7 +127,7 @@ export class LedgerRepository {
     const bounds = periodBounds(pid, this.config.period);
     const limit = this.getEffectiveLimit(userId);
     const nowIso = now.toISOString();
-    const pending = this.countPending(userId, pid, nowIso);
+    const pending = this.countOpenReserved(userId, pid, nowIso);
     const committed = this.countCommitted(userId, pid);
     const used = committed;
     const remaining = Math.max(0, limit - used - pending);
@@ -151,11 +151,21 @@ export class LedgerRepository {
       .all(userId, limit) as LedgerRow[];
   }
 
+  /** Lazy expiry for the current period, in its own transaction (used before reporting usage). */
+  expireStale(userId: string): number {
+    const now = this.clock.now();
+    const periodId = periodIdFor(now, this.config.period);
+    return this.sqlite.withImmediateTransaction(() =>
+      this.expireStaleInTx(userId, periodId, now.toISOString()),
+    );
+  }
+
   /**
-   * Expire stale RESERVED rows for a user/period inside an open transaction.
+   * Expire stale RESERVED rows for a user/period. Caller must hold BEGIN IMMEDIATE,
+   * so no settle can append a terminal row between the SELECT and the INSERTs.
    * Returns how many credits were returned to the counter.
    */
-  expireStaleInTx(userId: string, periodId: string, nowIso: string): number {
+  private expireStaleInTx(userId: string, periodId: string, nowIso: string): number {
     const stale = this.sqlite.db
       .prepare(
         `SELECT * FROM usage_ledger r
@@ -169,73 +179,53 @@ export class LedgerRepository {
       )
       .all(userId, periodId, nowIso) as LedgerRow[];
 
-    let released = 0;
     for (const row of stale) {
-      // Skip if already settled (terminal unique index would fail anyway).
-      const terminal = this.sqlite.db
+      this.sqlite.db
         .prepare(
-          `SELECT 1 AS ok FROM usage_ledger
-           WHERE reservation_id = ? AND status IN ('COMMITTED','RELEASED') LIMIT 1`,
+          `INSERT INTO usage_ledger(
+            usage_id, user_id, idempotency_key, request_id, period_id, status,
+            reservation_id, credits, limit_at_time_of_use, created_at, settled_at,
+            ai_outcome, latency_ms, error_code, request_hash, expire_at, release_reason
+          ) VALUES (?, ?, ?, ?, ?, 'RELEASED', ?, 0, ?, ?, ?, NULL, NULL, 'TTL_EXPIRED', ?, NULL, 'ttl_expired')`,
         )
-        .get(row.reservation_id) as { ok: number } | undefined;
-      if (terminal) {
-        continue;
-      }
-
-      const usageId = randomUUID();
-      try {
-        this.sqlite.db
-          .prepare(
-            `INSERT INTO usage_ledger(
-              usage_id, user_id, idempotency_key, request_id, period_id, status,
-              reservation_id, credits, limit_at_time_of_use, created_at, settled_at,
-              ai_outcome, latency_ms, error_code, request_hash, expire_at, release_reason
-            ) VALUES (?, ?, ?, ?, ?, 'RELEASED', ?, 0, ?, ?, ?, NULL, NULL, 'TTL_EXPIRED', ?, NULL, 'ttl_expired')`,
-          )
-          .run(
-            usageId,
-            row.user_id,
-            row.idempotency_key,
-            row.request_id,
-            row.period_id,
-            row.reservation_id,
-            row.limit_at_time_of_use,
-            nowIso,
-            nowIso,
-            row.request_hash,
-          );
-        this.sqlite.db
-          .prepare(
-            `UPDATE quota_counters SET used = used - 1
-             WHERE user_id = ? AND period_id = ? AND used > 0`,
-          )
-          .run(userId, periodId);
-        this.sqlite.db
-          .prepare(
-            `UPDATE idempotency_index SET terminal = 1,
-             response_json = COALESCE(response_json, ?)
-             WHERE user_id = ? AND idempotency_key = ?`,
-          )
-          .run(
-            JSON.stringify({
-              status: 'released',
-              reason: 'ttl_expired',
-              reservationId: row.reservation_id,
-            }),
-            userId,
-            row.idempotency_key,
-          );
-        released += 1;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        // Race: another settler won the terminal unique index.
-        if (message.includes('UNIQUE')) {
-          continue;
-        }
-        throw err;
-      }
+        .run(
+          randomUUID(),
+          row.user_id,
+          row.idempotency_key,
+          row.request_id,
+          row.period_id,
+          row.reservation_id,
+          row.limit_at_time_of_use,
+          nowIso,
+          nowIso,
+          row.request_hash,
+        );
+      this.sqlite.db
+        .prepare(
+          `UPDATE quota_counters SET used = used - 1
+           WHERE user_id = ? AND period_id = ? AND used > 0`,
+        )
+        .run(userId, periodId);
+      // Same shape as a normal response so a replay of this key is predictable;
+      // the AI answer (if any) was never stored, so `ai` is null.
+      this.sqlite.db
+        .prepare(
+          `UPDATE idempotency_index SET terminal = 1, response_json = ?
+           WHERE user_id = ? AND idempotency_key = ?`,
+        )
+        .run(
+          JSON.stringify({
+            reservationId: row.reservation_id,
+            status: 'released',
+            reason: 'ttl_expired',
+            ai: null,
+            idempotencyKey: row.idempotency_key,
+          }),
+          userId,
+          row.idempotency_key,
+        );
     }
-    return released;
+    return stale.length;
   }
 
   /** Global sweeper: expire all stale reservations. */
@@ -485,8 +475,7 @@ export class LedgerRepository {
     });
   }
 
-  reconcile(now: Date = this.clock.now()): ReconcileDrift[] {
-    const nowIso = now.toISOString();
+  reconcile(): ReconcileDrift[] {
     const counters = this.sqlite.db
       .prepare(`SELECT user_id, period_id, used FROM quota_counters`)
       .all() as Array<{ user_id: string; period_id: string; used: number }>;
@@ -494,8 +483,7 @@ export class LedgerRepository {
     const drifts: ReconcileDrift[] = [];
     for (const c of counters) {
       const committed = this.countCommitted(c.user_id, c.period_id);
-      const pending = this.countPending(c.user_id, c.period_id, nowIso);
-      const ledgerUsed = committed + pending;
+      const ledgerUsed = committed + this.countOpenReserved(c.user_id, c.period_id);
       if (ledgerUsed !== c.used) {
         drifts.push({
           userId: c.user_id,

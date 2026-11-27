@@ -74,7 +74,7 @@ SQLite triggers reject `UPDATE`/`DELETE` on the ledger. State changes are new ro
 2. **EXECUTE**: call simulated AI outside any TX (random delay, failure rate, hard timeout). No retries.
 3. **SETTLE** (separate TX): if reservation already terminal, no-op (idempotent). On success append `COMMITTED` (counter stays). On failure/timeout append `RELEASED` and decrement counter. The idempotency replay body is written in the same TX. Partial unique index + status check prevent late double-settle after TTL release. Startup requires the reservation TTL to be longer than the AI timeout, so the sweeper cannot release a call that is still running.
 
-Counter invariant: `used = count(COMMITTED) + count(non-expired RESERVED)` for the period. `RELEASED` and `REJECTED_QUOTA` do not count. `npm run reconcile` verifies and reports drift.
+Counter invariant: `used = count(COMMITTED) + count(open RESERVED)` for the period, where open means no terminal row yet (an expired reservation still counts until the expiry path appends `RELEASED`). The usage response's `pending` shows only non-expired ones. `RELEASED` and `REJECTED_QUOTA` do not count. `npm run reconcile` verifies and reports drift.
 
 ## 4. Edge cases
 
@@ -104,7 +104,7 @@ Counter invariant: `used = count(COMMITTED) + count(non-expired RESERVED)` for t
 
 - **DB locked/down/slow**: fail closed with 503; do not call AI without a reservation.
 - **AI down/slow**: hard timeout → release; no automatic retries that could double-charge.
-- **Settle write fails after AI success**: leave `RESERVED` until sweeper or client retry with same idempotency key; production would add an outbox. Documented limitation: rare settle failure after success may temporarily show pending until TTL/retry.
+- **Settle write fails after AI success**: return 503 and leave `RESERVED` until TTL/sweeper releases it unbilled. A retry with the same idempotency key gets 409, then the `ttl_expired` body; the answer is lost and the client needs a new key. Production would add an outbox.
 - **Graceful shutdown**: stop accepting new work, wait briefly for in-flight, leave unsettled `RESERVED` for sweeper; exec-form Docker `CMD` so `SIGTERM` reaches Node.
 
 ## 6. Scaling

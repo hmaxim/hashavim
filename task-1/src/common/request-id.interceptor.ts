@@ -14,8 +14,10 @@ export class RequestIdInterceptor implements NestInterceptor {
     const http = context.switchToHttp();
     const req = http.getRequest<Request & { requestId?: string }>();
     const res = http.getResponse<Response>();
-    const incoming = req.header('x-request-id');
-    const requestId = incoming && incoming.trim() !== '' ? incoming : randomUUID();
+    // Always server-generated: request_id is stored as ledger evidence, so a client must
+    // not be able to choose or collide it. The client's id is only logged for correlation.
+    const requestId = randomUUID();
+    const clientRequestId = req.header('x-request-id')?.slice(0, 128) ?? null;
     req.requestId = requestId;
     res.setHeader('x-request-id', requestId);
 
@@ -28,6 +30,7 @@ export class RequestIdInterceptor implements NestInterceptor {
               level: 'info',
               msg: 'request_completed',
               request_id: requestId,
+              client_request_id: clientRequestId,
               method: req.method,
               path: req.originalUrl,
               status: res.statusCode,
@@ -42,6 +45,7 @@ export class RequestIdInterceptor implements NestInterceptor {
               level: 'error',
               msg: 'request_failed',
               request_id: requestId,
+              client_request_id: clientRequestId,
               method: req.method,
               path: req.originalUrl,
               error: message,
