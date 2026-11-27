@@ -1,0 +1,11 @@
+services:
+  task-board:
+    build: .
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      PORT: "3000"
+      MOCK_ENABLED: "${MOCK_ENABLED:-true}"
+      MOCK_MIN_MS: "${MOCK_MIN_MS:-2000}"
+      MOCK_MAX_MS: "${MOCK_MAX_MS:-5000}"
+      MOCK_SEED: "${MOCK_SEED:-}"

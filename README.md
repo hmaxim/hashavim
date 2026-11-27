@@ -17,4 +17,13 @@ Details: [task-1/README.md](task-1/README.md)
 
 ## Task 2 — Shared-State Team Task Board
 
-Not implemented in this branch.
+Next.js 15 board with Zustand + pure reducer and SSE mock updates. Five panels stay in sync.
+
+```bash
+cd task-2
+npm start
+```
+
+Tests: `cd task-2 && npm test`
+
+Details: [task-2/README.md](task-2/README.md)
