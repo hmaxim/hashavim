@@ -2,14 +2,18 @@
 
 A Next.js 15 App Router board where five panels share one source of truth. User edits and mock-server updates both flow through a pure reducer so derived counts and groupings cannot drift.
 
-**Runtime:** Node.js 20+
+**Runtime:** Node.js 20+ (or Docker)
 
 ## How to run
 
 ```bash
 cd task-2
+docker compose up --build
+# or
 npm start
 ```
+
+`docker compose up --build` builds the image and serves on `PORT` (default `3000`).
 
 `npm start` installs dependencies if `node_modules` is missing, builds if there is no production build (`.next/BUILD_ID`; a `.next` from `npm run dev` does not count), then serves on `PORT` (default `3000`).
 
@@ -94,11 +98,3 @@ Mock timer ───────────────────────
 
 - [DECISIONS.md](DECISIONS.md)
 - [AI_USAGE.md](AI_USAGE.md)
-
-## Docker (optional)
-
-```bash
-docker compose up --build
-```
-
-Still prefer `npm start` for local review.

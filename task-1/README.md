@@ -2,16 +2,22 @@
 
 NestJS + SQLite service that meters AI requests with an append-only usage ledger and atomic reserve → execute → settle quota enforcement.
 
-**Runtime:** Node.js 20+
+**Runtime:** Node.js 20+ (or Docker)
 
 ## How to run
 
 ```bash
 cd task-1
+docker compose up --build
+# or
 npm start
 ```
 
+`docker compose up --build` builds the image and serves on `PORT` (default `3000`). Data lives in the named volume `usage_data` mounted at `/data` (`DB_PATH=/data/usage.db`). Reset with `docker compose down -v`.
+
 `npm start` installs dependencies if `node_modules` is missing, builds TypeScript, and serves on `PORT` (default `3000`).
+
+**Limitation:** run exactly **one** replica. SQLite is not safe for multi-writer scale-out (see [DESIGN.md](DESIGN.md)).
 
 ### Tests
 
@@ -26,20 +32,6 @@ npm run test:all    # everything
 ```bash
 npm run reconcile
 ```
-
-### Docker (optional extra)
-
-```bash
-docker compose up --build
-```
-
-Data lives in the named volume `usage_data` mounted at `/data` (`DB_PATH=/data/usage.db`). Reset with:
-
-```bash
-docker compose down -v
-```
-
-**Limitation:** run exactly **one** replica. SQLite is not safe for multi-writer scale-out (see [DESIGN.md](DESIGN.md)).
 
 ## Configuration
 
