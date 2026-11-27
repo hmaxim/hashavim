@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+coverage
+npm-debug.log*
+Dockerfile
+docker-compose.yml
+README.md
+DECISIONS.md
+AI_USAGE.md
+*.test.ts
+*.test.tsx
+vitest.config.ts
+vitest.setup.ts

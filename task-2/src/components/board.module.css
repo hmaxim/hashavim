@@ -1,0 +1,287 @@
+.board {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 1.25rem;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.6rem;
+}
+
+.headerActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.muted {
+  color: #5c6570;
+  margin: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  grid-template-areas:
+    "list editor"
+    "list summary"
+    "assignee activity";
+  gap: 0.85rem;
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid #d9dee5;
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  min-height: 8rem;
+}
+
+.panel:nth-child(1) {
+  grid-area: list;
+}
+
+.panel:nth-child(2) {
+  grid-area: editor;
+}
+
+.panel:nth-child(3) {
+  grid-area: summary;
+}
+
+.panel:nth-child(4) {
+  grid-area: assignee;
+}
+
+.panel:nth-child(5) {
+  grid-area: activity;
+}
+
+.panel h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.subheading {
+  margin: 0.75rem 0 0.35rem;
+  font-size: 0.9rem;
+}
+
+.empty {
+  color: #6b7280;
+  font-size: 0.9rem;
+}
+
+.addForm {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.addForm input {
+  flex: 1;
+}
+
+.taskList,
+.groupList,
+.countList,
+.activityList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.taskRow,
+.taskRowSelected {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1.4fr) repeat(3, minmax(5.5rem, 0.9fr)) auto;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.4rem;
+  border-radius: 6px;
+  margin-bottom: 0.35rem;
+}
+
+.taskRowSelected {
+  background: #eef4ff;
+  outline: 1px solid #9db7f0;
+}
+
+.taskTitleBtn {
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 0.25rem;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.taskTitleBtn:hover,
+.taskTitleBtn:focus-visible {
+  text-decoration: underline;
+}
+
+.editorFields {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.editorFields label {
+  font-size: 0.85rem;
+  color: #374151;
+}
+
+.countList li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.15rem 0;
+  font-size: 0.92rem;
+}
+
+.assigneeGroups {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.groupItem,
+.groupItemSelected {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  text-align: left;
+  border: 1px solid transparent;
+  background: #f7f8fa;
+  border-radius: 6px;
+  padding: 0.4rem 0.5rem;
+  margin-bottom: 0.3rem;
+  cursor: pointer;
+  font: inherit;
+}
+
+.groupItemSelected {
+  background: #eef4ff;
+  border-color: #9db7f0;
+}
+
+.activityList li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid #eef0f3;
+  font-size: 0.88rem;
+}
+
+.activityPending {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.activityFailed {
+  color: #9b1c1c;
+}
+
+.activityTime {
+  color: #6b7280;
+  white-space: nowrap;
+  font-size: 0.8rem;
+}
+
+.connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: #f3f4f6;
+}
+
+.connectionDot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #9ca3af;
+}
+
+.connection[data-status="connected"] .connectionDot {
+  background: #16a34a;
+}
+
+.connection[data-status="reconnecting"] .connectionDot {
+  background: #d97706;
+}
+
+.mockControls {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.danger {
+  background: #fff1f1;
+  border-color: #f0b4b4;
+  color: #9b1c1c;
+}
+
+.notice {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #92400e;
+  background: #fff7ed;
+  padding: 0.35rem 0.5rem;
+  border-radius: 4px;
+}
+
+.errorBanner {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 0.55rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 960px) {
+  .grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "list"
+      "editor"
+      "summary"
+      "assignee"
+      "activity";
+  }
+
+  .taskRow,
+  .taskRowSelected {
+    grid-template-columns: 1fr 1fr;
+  }
+}
